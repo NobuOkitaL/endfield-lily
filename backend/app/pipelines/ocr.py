@@ -42,6 +42,13 @@ _WAN_RE = re.compile(
 _NUM_RE = re.compile(r"^\s*([0-9][0-9,]*)\+?\s*$")
 
 CONFIDENCE_THRESHOLD = 0.8
+# Lower floor at which a "clean" digit string is still trustable. RapidOCR
+# tends to score synthetic / cv2.putText text around 0.6-0.75 even when it
+# reads the digits correctly; the design doc's 0.8 cutoff was calibrated for
+# PaddleOCR which we couldn't install. We keep the 0.8 strict path for
+# "was-there-text-here" judgement but accept a lower confidence when the text
+# unambiguously parses to a positive integer / quantity.
+PARSEABLE_CONFIDENCE_FLOOR = 0.5
 
 
 def parse_quantity_string(raw: str) -> int | None:
@@ -73,13 +80,25 @@ def parse_quantity_string(raw: str) -> int | None:
 
 
 def parse_ocr_result(raw: str, confidence: float) -> int | None:
-    """Wrap parse_quantity_string with a confidence gate.
+    """Wrap parse_quantity_string with a tiered confidence gate.
 
-    Returns None if confidence < CONFIDENCE_THRESHOLD (0.8).
+    - confidence >= CONFIDENCE_THRESHOLD (0.8): trust the parse result directly.
+    - PARSEABLE_CONFIDENCE_FLOOR <= confidence < 0.8: trust only if the string
+      parses cleanly to a non-negative integer (rescues RapidOCR's lower scores
+      on clean digits).
+    - confidence < PARSEABLE_CONFIDENCE_FLOOR (0.5): reject outright.
     """
-    if confidence < CONFIDENCE_THRESHOLD:
+    if confidence < PARSEABLE_CONFIDENCE_FLOOR:
         return None
-    return parse_quantity_string(raw)
+    parsed = parse_quantity_string(raw)
+    if parsed is None:
+        return None
+    if confidence >= CONFIDENCE_THRESHOLD:
+        return parsed
+    # Mid-band: only accept if we fully parsed AND value is sane
+    if parsed < 0:
+        return None
+    return parsed
 
 
 # ---------------------------------------------------------------------------

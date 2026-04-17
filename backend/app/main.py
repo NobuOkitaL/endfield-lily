@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routes import inventory
+
 app = FastAPI(title="ZMD 终末地识别后端", version="0.1.0")
 
 app.add_middleware(
@@ -10,6 +12,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(inventory.router)
 
 
 @app.get("/health")
