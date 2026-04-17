@@ -135,11 +135,78 @@ function portMaterials() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// operators case (Task 5 — placeholder)
+// operators case (Task 5)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function portOperators() {
-  throw new Error('portOperators: not yet implemented (Task 5)');
+  console.log('Porting operators...');
+
+  const { CHARACTER_LIST, SKILL_MAPPING, EXCEPTIONS, OPERATOR_AVATARS } = extractConsts([
+    'CHARACTER_LIST',
+    'SKILL_MAPPING',
+    'EXCEPTIONS',
+    'OPERATOR_AVATARS',
+  ]);
+
+  // Validate CHARACTER_LIST
+  if (CHARACTER_LIST.length !== 25) {
+    throw new Error(
+      `Validation failed: expected CHARACTER_LIST.length === 25, got ${CHARACTER_LIST.length}`,
+    );
+  }
+  console.log(`  Found ${CHARACTER_LIST.length} characters in CHARACTER_LIST.`);
+
+  // Validate SKILL_MAPPING length matches CHARACTER_LIST
+  if (SKILL_MAPPING.length !== CHARACTER_LIST.length) {
+    throw new Error(
+      `Validation failed: SKILL_MAPPING.length (${SKILL_MAPPING.length}) !== CHARACTER_LIST.length (${CHARACTER_LIST.length})`,
+    );
+  }
+  console.log(`  SKILL_MAPPING has ${SKILL_MAPPING.length} rows.`);
+
+  // Validate OPERATOR_AVATARS covers every character in CHARACTER_LIST
+  for (const name of CHARACTER_LIST) {
+    if (!OPERATOR_AVATARS[name]) {
+      throw new Error(
+        `Validation failed: OPERATOR_AVATARS is missing key for character "${name}"`,
+      );
+    }
+  }
+  console.log(`  OPERATOR_AVATARS covers all ${CHARACTER_LIST.length} characters.`);
+
+  // Note: EXCEPTIONS length is intentionally NOT validated (currently 1, may grow)
+  console.log(`  EXCEPTIONS has ${EXCEPTIONS.length} entries.`);
+
+  const characterListJson = JSON.stringify(CHARACTER_LIST, null, 2);
+  const skillMappingJson = JSON.stringify(SKILL_MAPPING, null, 2);
+  const exceptionsJson = JSON.stringify(EXCEPTIONS, null, 2);
+  const operatorAvatarsJson = JSON.stringify(OPERATOR_AVATARS, null, 2);
+
+  const output = [
+    `// frontend/src/data/operators.ts`,
+    `// Auto-generated from reference/zmdgraph/js/data.js \u2014 do not edit by hand.`,
+    ``,
+    `export const CHARACTER_LIST = ${characterListJson} as const;`,
+    ``,
+    `export type OperatorSkillMapping = {`,
+    `  \u5e72\u5458: string;`,
+    `  \u6280\u80fd1: string;`,
+    `  \u6280\u80fd2: string;`,
+    `  \u6280\u80fd3: string;`,
+    `  \u6280\u80fd4: string;`,
+    `};`,
+    ``,
+    `export const SKILL_MAPPING: OperatorSkillMapping[] = ${skillMappingJson};`,
+    ``,
+    `export const EXCEPTIONS: { \u5e72\u5458: string; \u6392\u9664\u9879\u76ee: string }[] = ${exceptionsJson};`,
+    ``,
+    `export const OPERATOR_AVATARS: Record<string, string> = ${operatorAvatarsJson};`,
+    ``,
+  ].join('\n');
+
+  ensureOutDir();
+  writeOut('operators.ts', output);
+  console.log('  operators done.');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
