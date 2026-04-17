@@ -25,7 +25,9 @@ pnpm test -- <file>   # Run one test file (e.g. pnpm test -- cost-calc)
 
 TypeScript sanity check: `npx tsc --noEmit` (run from `frontend/`).
 
-Icon/design principles live in `docs/superpowers/specs/...-design.md`. `reference/` is clone-space for upstream repos and is **gitignored** — never commit its contents.
+Design spec lives in `docs/design/theverge.md`. Project spec + plans under `docs/superpowers/`. `reference/` is clone-space for upstream repos and is **gitignored** — never commit its contents.
+
+**Bleeding-edge stack note**: Vite 8 + React 19 + TS 6 + Tailwind 3. TS 6 has strict flags on (`verbatimModuleSyntax`, `noUnusedLocals`, `erasableSyntaxOnly`) that sometimes trip shadcn-generated code. `tsconfig.json` / `tsconfig.app.json` carry `"ignoreDeprecations": "6.0"` to silence the `baseUrl` deprecation — keep it. When a third-party lib's docs assume React 18 / Vite 5 / Tailwind 4, pin to versions that match this stack instead.
 
 ## Architecture
 
@@ -63,14 +65,22 @@ Note: `OperatorState` uses `信赖` (simplified field), but the upstream `Upgrad
 
 ### UI is dark-only, editorial Verge aesthetic
 
-The app has **no light mode** (intentional — canvas is `#131313`). `AppShell.tsx` force-applies `html.dark`. Design tokens follow `/tmp/theverge-design.md` (The Verge brand) — Jelly Mint `#3cffd0` + Verge Ultraviolet `#5200ff` as hazard accents, Anton display / Hanken Grotesk UI / JetBrains Mono UPPERCASE labels, 1px borders instead of box-shadows, rounded pill radii (20/24/30/40px).
+The app has **no light mode** (intentional — canvas is `#131313`). `AppShell.tsx` force-applies `html.dark`. Full design spec: **`docs/design/theverge.md`** (The Verge brand adapted for this project). Key tokens:
 
-shadcn/ui components under `src/components/ui/` have been **rewritten** (not zinc defaults): `button.tsx` variants are Jelly Mint Pill (default), Dark Slate Pill (secondary), Outlined Mint 40px (outline), Ultraviolet Outlined (destructive). If adding new UI, match this vocabulary.
+- Hazard accents: Jelly Mint `#3cffd0` + Verge Ultraviolet `#5200ff` — never background washes, never gradients
+- Fonts: Anton (display ≥32px) / Hanken Grotesk (UI body) / JetBrains Mono (ALL-CAPS labels, 1.1–1.9px tracking) — loaded from Google Fonts in `frontend/index.html`
+- Borders not shadows: 1px hairlines in white/mint/ultraviolet; `box-shadow: none !important` is global in `src/index.css`
+- Radii on scale: 2 / 3 / 4 / 20 / 24 / 30 / 40px (+ `50%` for avatars). No square corners.
+- Link hover → Deep Link Blue `#3860be` (color-only, no underline)
+
+shadcn/ui components under `src/components/ui/` have been **rewritten** (not zinc defaults): `button.tsx` variants are Jelly Mint Pill (default), Dark Slate Pill (secondary), Outlined Mint 40px (outline), Ultraviolet Outlined (destructive). shadcn config marker is `frontend/components.json` — add new components via `pnpm dlx shadcn@latest add <name>` then re-skin to Verge vocabulary.
 
 Button positioning convention across the app:
 - Page headers: primary CTA top-right, same row as the Anton headline (`flex justify-between items-center`)
 - Card rows: actions right-aligned (`ml-auto`)
 - Dialog footers: destructive on left (`mr-auto`), confirm on right
+
+**Vestigial code:** `settings.darkMode` + `toggleDarkMode` still exist in `app-store.ts` (the Settings page UI that used them was removed when Verge mandated dark-only). The field is harmless but misleading — don't add UI that reads it expecting a toggle to matter. Purge it if you're touching store schema anyway.
 
 ### Tests
 
