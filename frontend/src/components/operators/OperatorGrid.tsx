@@ -1,6 +1,6 @@
 // frontend/src/components/operators/OperatorGrid.tsx
 import { useState } from 'react';
-import { CHARACTER_LIST } from '@/data/operators';
+import { CHARACTER_LIST, OPERATOR_AVATARS } from '@/data/operators';
 import { useAppStore } from '@/store/app-store';
 import { OperatorEditDialog } from './OperatorEditDialog';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,12 @@ export function OperatorGrid() {
                 has ? 'border-l-4 border-l-mint' : '',
               ].join(' ')}
             >
+              <img
+                src={`/${OPERATOR_AVATARS[n]}`}
+                alt={n}
+                className="w-14 h-14 rounded-md shrink-0 object-cover"
+                loading="lazy"
+              />
               <div className="flex-1 min-w-0">
                 <div className="font-sans font-bold text-white text-base leading-tight">
                   {n}

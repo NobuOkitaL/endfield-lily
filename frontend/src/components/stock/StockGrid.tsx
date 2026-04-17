@@ -1,6 +1,6 @@
 // frontend/src/components/stock/StockGrid.tsx
 import { useState } from 'react';
-import { MATERIAL_COLUMNS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
+import { MATERIAL_COLUMNS, MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
 import { useAppStore } from '@/store/app-store';
 import { computeVirtualExp } from '@/logic/stock';
 import { Input } from '@/components/ui/input';
@@ -28,25 +28,25 @@ export function StockGrid() {
       />
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
         {rows.map((name) => {
+          const iconSrc = `/${MATERIAL_ICONS[name]}`;
           if (VIRTUAL_EXP_MATERIALS.has(name)) {
             const val = computeVirtualExp(stock, EXP_TYPE_FOR_VIRTUAL[name]);
             return (
-              // Virtual EXP: mint left border rail
               <div
                 key={name}
                 className="border border-white/20 rounded-card p-3 bg-canvas border-l-2 border-l-mint"
               >
-                <div className="font-sans text-sm font-bold text-white">{name}</div>
+                <div className="flex items-center gap-2 mb-1">
+                  <img src={iconSrc} alt={name} className="w-8 h-8 rounded-sm shrink-0" loading="lazy" />
+                  <div className="font-sans text-sm font-bold text-white truncate">{name}</div>
+                </div>
                 <div
                   className="font-mono uppercase text-[#949494] mt-0.5"
                   style={{ fontSize: '10px', letterSpacing: '1.1px' }}
                 >
                   计算值
                 </div>
-                <div
-                  className="font-mono text-mint mt-1.5"
-                  style={{ fontSize: '18px' }}
-                >
+                <div className="font-mono text-mint mt-1.5" style={{ fontSize: '18px' }}>
                   {val.toLocaleString()}
                 </div>
               </div>
@@ -55,7 +55,10 @@ export function StockGrid() {
           const current = stock[name as MaterialName] ?? 0;
           return (
             <div key={name} className="border border-white/20 rounded-card p-3 bg-canvas">
-              <div className="font-sans text-sm font-bold text-white mb-2">{name}</div>
+              <div className="flex items-center gap-2 mb-2">
+                <img src={iconSrc} alt={name} className="w-8 h-8 rounded-sm shrink-0" loading="lazy" />
+                <div className="font-sans text-sm font-bold text-white truncate">{name}</div>
+              </div>
               <Input
                 type="number"
                 min={0}

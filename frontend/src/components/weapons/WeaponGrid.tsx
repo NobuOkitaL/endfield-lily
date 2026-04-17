@@ -1,6 +1,6 @@
 // frontend/src/components/weapons/WeaponGrid.tsx
 import { useState } from 'react';
-import { WEAPON_LIST } from '@/data/weapons';
+import { WEAPON_LIST, WEAPON_AVATARS } from '@/data/weapons';
 import { useAppStore } from '@/store/app-store';
 import { WeaponEditDialog } from './WeaponEditDialog';
 import { Input } from '@/components/ui/input';
@@ -67,6 +67,12 @@ export function WeaponGrid() {
                     has ? 'border-l-4 border-l-mint' : '',
                   ].join(' ')}
                 >
+                  <img
+                    src={`/${WEAPON_AVATARS[w.name]}`}
+                    alt={w.name}
+                    className="w-14 h-14 rounded-md shrink-0 object-cover"
+                    loading="lazy"
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="font-sans font-bold text-white text-base leading-tight">
                       {w.name}

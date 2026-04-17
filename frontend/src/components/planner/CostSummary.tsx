@@ -3,7 +3,7 @@ import { useAppStore } from '@/store/app-store';
 import { computeAllPlanCost } from '@/logic/plan-aggregator';
 import { diffStock, deductStock } from '@/logic/stock';
 import { Button } from '@/components/ui/button';
-import { MATERIAL_COLUMNS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
+import { MATERIAL_COLUMNS, MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
 
 export function CostSummary() {
   const stock = useAppStore((s) => s.stock);
@@ -72,7 +72,7 @@ export function CostSummary() {
       </div>
 
       {/* Cost rows */}
-      <div className="grid grid-cols-2 gap-y-1.5">
+      <div className="flex flex-col gap-1.5">
         {MATERIAL_COLUMNS.map((m) => {
           const need = cost[m as MaterialName];
           if (!need) return null;
@@ -80,8 +80,14 @@ export function CostSummary() {
           const have = stock[m as MaterialName] ?? 0;
           const short = !isExp && have < need;
           return (
-            <div key={m} className="contents">
-              <div className="font-sans text-[13px] text-[#e9e9e9]">{m}</div>
+            <div key={m} className="flex items-center gap-2">
+              <img
+                src={`/${MATERIAL_ICONS[m as MaterialName]}`}
+                alt={m}
+                className="w-6 h-6 rounded-sm shrink-0"
+                loading="lazy"
+              />
+              <div className="font-sans text-[13px] text-[#e9e9e9] flex-1 truncate">{m}</div>
               <div
                 className={`text-right font-mono text-[13px] ${short ? 'text-ultraviolet font-bold' : 'text-white'}`}
               >
