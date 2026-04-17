@@ -1,0 +1,25 @@
+[project]
+name = "zmd-backend"
+version = "0.1.0"
+description = "终末地规划器后端：截图识别"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "python-multipart>=0.0.9",
+  "opencv-python>=4.10",
+  "numpy>=1.26",
+  # paddleocr + paddlepaddle unavailable for Python 3.14/Apple Silicon; use rapidocr instead
+  "rapidocr-onnxruntime>=1.2",
+  "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",  # FastAPI TestClient dependency
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
