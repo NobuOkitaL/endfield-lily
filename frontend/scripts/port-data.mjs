@@ -17,13 +17,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 const DATA_JS = resolve(ROOT, 'reference/zmdgraph/js/data.js');
+const WEAPON_ADD_JS = resolve(ROOT, 'reference/zmdgraph/js/weaponAdd.js');
 const OUT_DIR = resolve(__dirname, '../src/data');
+
+/** Load a JS file and extract the requested top-level const names via new Function. */
+function extractConstsFromFile(filePath, names) {
+  const fileContent = readFileSync(filePath, 'utf8');
+  const fn = new Function(fileContent + `\nreturn { ${names.join(', ')} };`);
+  return fn();
+}
 
 /** Load data.js and extract the requested top-level const names via new Function. */
 function extractConsts(names) {
-  const fileContent = readFileSync(DATA_JS, 'utf8');
-  const fn = new Function(fileContent + `\nreturn { ${names.join(', ')} };`);
-  return fn();
+  return extractConstsFromFile(DATA_JS, names);
 }
 
 /** Ensure the output directory exists. */
@@ -210,11 +216,111 @@ function portOperators() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// weapons case (Task 6 — placeholder)
+// weapons case (Task 6)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function portWeapons() {
-  throw new Error('portWeapons: not yet implemented (Task 6)');
+  console.log('Porting weapons...');
+
+  // Extract from data.js
+  const {
+    WEAPON_LEVEL_STAGES,
+    WEAPON_BREAK_GENERAL,
+    WEAPON_BREAK_4_BASE,
+    WEAPON_AVATARS,
+  } = extractConstsFromFile(DATA_JS, [
+    'WEAPON_LEVEL_STAGES',
+    'WEAPON_BREAK_GENERAL',
+    'WEAPON_BREAK_4_BASE',
+    'WEAPON_AVATARS',
+  ]);
+
+  // Extract from weaponAdd.js
+  const { WEAPON_LIST, WEAPON_BREAK_4_SPECIAL } = extractConstsFromFile(
+    WEAPON_ADD_JS,
+    ['WEAPON_LIST', 'WEAPON_BREAK_4_SPECIAL'],
+  );
+
+  // Validation: WEAPON_LIST has a reasonable count (>= 50)
+  if (!Number.isInteger(WEAPON_LIST.length) || WEAPON_LIST.length < 50) {
+    throw new Error(
+      `Validation failed: WEAPON_LIST.length (${WEAPON_LIST.length}) is not a positive integer >= 50`,
+    );
+  }
+  console.log(`  Found ${WEAPON_LIST.length} weapons in WEAPON_LIST.`);
+
+  // Validation: WEAPON_BREAK_GENERAL must have exactly keys '1', '2', '3'
+  const generalKeys = Object.keys(WEAPON_BREAK_GENERAL).sort();
+  if (JSON.stringify(generalKeys) !== JSON.stringify(['1', '2', '3'])) {
+    throw new Error(
+      `Validation failed: WEAPON_BREAK_GENERAL keys are ${JSON.stringify(generalKeys)}, expected ["1","2","3"]`,
+    );
+  }
+
+  // Validation: WEAPON_LEVEL_STAGES length >= 80
+  if (WEAPON_LEVEL_STAGES.length < 80) {
+    throw new Error(
+      `Validation failed: WEAPON_LEVEL_STAGES.length (${WEAPON_LEVEL_STAGES.length}) < 80`,
+    );
+  }
+  console.log(`  WEAPON_LEVEL_STAGES has ${WEAPON_LEVEL_STAGES.length} entries (max level: ${WEAPON_LEVEL_STAGES[WEAPON_LEVEL_STAGES.length - 1].to}).`);
+
+  // Validation: every weapon in WEAPON_LIST must have an entry in WEAPON_AVATARS and WEAPON_BREAK_4_SPECIAL
+  for (const w of WEAPON_LIST) {
+    if (!WEAPON_AVATARS[w.name]) {
+      throw new Error(
+        `Validation failed: WEAPON_AVATARS is missing key for weapon "${w.name}"`,
+      );
+    }
+    if (WEAPON_BREAK_4_SPECIAL[w.name] === undefined) {
+      throw new Error(
+        `Validation failed: WEAPON_BREAK_4_SPECIAL is missing key for weapon "${w.name}"`,
+      );
+    }
+  }
+  console.log(`  WEAPON_AVATARS and WEAPON_BREAK_4_SPECIAL cover all ${WEAPON_LIST.length} weapons.`);
+
+  const weaponListJson = JSON.stringify(WEAPON_LIST, null, 2);
+  const weaponAvatarsJson = JSON.stringify(WEAPON_AVATARS, null, 2);
+  const weaponLevelStagesJson = JSON.stringify(WEAPON_LEVEL_STAGES, null, 2);
+  const weaponBreakGeneralJson = JSON.stringify(WEAPON_BREAK_GENERAL, null, 2);
+  const weaponBreak4BaseJson = JSON.stringify(WEAPON_BREAK_4_BASE, null, 2);
+  const weaponBreak4SpecialJson = JSON.stringify(WEAPON_BREAK_4_SPECIAL, null, 2);
+
+  const output = [
+    `// frontend/src/data/weapons.ts`,
+    `// Auto-generated from reference/zmdgraph/js/{data,weaponAdd}.js \u2014 do not edit by hand.`,
+    ``,
+    `import type { MaterialName } from './materials';`,
+    ``,
+    `export type WeaponStar = 3 | 4 | 5 | 6;`,
+    ``,
+    `export type Weapon = { name: string; star: WeaponStar };`,
+    ``,
+    `export const WEAPON_LIST: Weapon[] = ${weaponListJson};`,
+    ``,
+    `export const WEAPON_AVATARS: Record<string, string> = ${weaponAvatarsJson};`,
+    ``,
+    `export type WeaponLevelStage = {`,
+    `  from: number;`,
+    `  to: number;`,
+    `  \u6b66\u5668\u7ecf\u9a8c\u503c: number;`,
+    `  \u6298\u91d1\u7968: number;`,
+    `};`,
+    ``,
+    `export const WEAPON_LEVEL_STAGES: WeaponLevelStage[] = ${weaponLevelStagesJson};`,
+    ``,
+    `export const WEAPON_BREAK_GENERAL: Record<'1' | '2' | '3', Partial<Record<MaterialName, number>>> = ${weaponBreakGeneralJson};`,
+    ``,
+    `export const WEAPON_BREAK_4_BASE: Partial<Record<MaterialName, number>> = ${weaponBreak4BaseJson};`,
+    ``,
+    `export const WEAPON_BREAK_4_SPECIAL: Record<string, Partial<Record<MaterialName, number>>> = ${weaponBreak4SpecialJson};`,
+    ``,
+  ].join('\n');
+
+  ensureOutDir();
+  writeOut('weapons.ts', output);
+  console.log('  weapons done.');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
