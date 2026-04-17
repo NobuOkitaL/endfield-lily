@@ -1,539 +1,106 @@
-# Plan A: 终末地规划器前端（从 zmdgraph 移植）实施计划
+# Plan A: 终末地规划器前端（从 zmdgraph 移植）实施计划（v2）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付一个能本地运行的《明日方舟：终末地》养成规划器前端，功能与 zmdgraph 对齐（干员/武器培养表、库存、规划、备份/导入、深色模式），用 React + TS + Tailwind + shadcn/ui 重写，数据存 localStorage。完成后已经可以当规划器使用，无需后端。
+> **v2 说明**：本 plan 从 v1 大改。v1 假设了通用"rarity + ascension"成长模型，和 zmdgraph 实际数据结构对不上。v2 按 zmdgraph 真实结构（38 种材料 + 697 行扁平升级表 + 独立的 8 个升级维度）重写。Tasks 1-3 已完成且不受影响，Tasks 4-17 是重写后的任务。
 
-**Architecture:** 纯前端 SPA。React 18 + Vite 管理构建。Zustand + persist 中间件自动同步 localStorage。游戏数据（材料/干员/武器/消耗表）打进 bundle。shadcn/ui 提供组件。规划计算和库存合并都写成纯函数，便于单测。
+**Goal:** 交付一个能本地运行的《明日方舟：终末地》养成规划器前端，1:1 复刻 zmdgraph 的数据与计算逻辑，支持多维度（精英、等级、装备、天赋、基建、信赖、4 个技能）的精细规划和库存管理。
 
-**Tech Stack:** Node.js 20+, pnpm, Vite 5, React 18, TypeScript 5, Tailwind CSS 3, shadcn/ui, Zustand 4, React Router 6, Vitest.
+**Architecture:** 纯前端 SPA。React 18+ + Vite + TypeScript + Tailwind + shadcn/ui。Zustand + persist 中间件自动同步 localStorage。游戏数据通过端口脚本从 `reference/zmdgraph/js/data.js` 抽取生成 TS 文件，打进 bundle。
+
+**Tech Stack:** 已安装：pnpm, Vite 8, React 19, TypeScript 6, Tailwind 3, shadcn/ui（button/card/input/label/table/tabs/dialog/sonner）, class-variance-authority, clsx, tailwind-merge, lucide-react, tailwindcss-animate。待装：zustand, react-router-dom, vitest, @testing-library/react, jsdom。
 
 **Reference Repos (read-only):**
-- `CaffuChin0/zmdgraph`：照搬 `js/data.js` 的数据结构和 `js/planner.js`、`js/stock.js` 的计算逻辑。
-- 不复用原项目的 HTML/CSS/UI 代码。
+- `reference/zmdgraph/js/data.js`：所有数据（DATABASE、MATERIAL_ICONS、WEAPON_* 等）的上游
+- `reference/zmdgraph/js/utils.js`：上游计算逻辑（`calculateMaterials`、`calculateLevelMaterials` 等）
+- `reference/zmdgraph/js/stock.js`、`planner.js`：上游库存/规划页逻辑
+- `reference/zmdgraph/js/weaponAdd.js`：`WEAPON_LIST`
 
 **Spec:** `docs/superpowers/specs/2026-04-17-zmd-planner-design.md`
 
 ---
 
-## Task 1：初始化仓库和参考代码
+## Upstream 数据模型速查（给后续所有任务读）
 
-**Files:**
-- Create: `.gitignore`
-- Create: `README.md`（占位）
-- Create: `reference/.gitignore`（忽略所有参考克隆）
+### 数据结构（data.js / weaponAdd.js 里的顶层 const）
 
-- [ ] **Step 1: 在 ZMD/ 初始化 git**
+| 名称 | 行数/键数 | 结构 |
+|------|-----------|------|
+| `CHARACTER_LIST` | 25 | `string[]` 干员名 |
+| `SKILL_MAPPING` | 25 | `{干员, 技能1, 技能2, 技能3, 技能4}[]` 技能显示名映射 |
+| `EXCEPTIONS` | 1+ | `{干员, 排除项目}[]` 某干员不适用某升级项目 |
+| `GENERAL_PROJECTS` | 10 | 升级项目名列表 |
+| `DATABASE` | ~697 | `{干员, 升级项目, 现等级, 目标等级, ...稀疏材料字段}[]` |
+| `WEAPON_EXP_VALUES` | 3 | `{武器检查单元: 200, 武器检查装置: 1000, 武器检查套组: 10000}` |
+| `WEAPON_LEVEL_STAGES` | 89 | `{from, to, 武器经验值, 折金票}[]` |
+| `WEAPON_BREAK_GENERAL` | 3 键 | `{1: {...}, 2: {...}, 3: {...}}` 通用破限 |
+| `WEAPON_BREAK_4_BASE` | - | `{折金票: 90000, 重型强固模具: 30}` |
+| `WEAPON_BREAK_4_SPECIAL` | 67 | `{[weaponName]: {材料: 数量}}` 第 4 级破限武器特殊材料 |
+| `OPERATOR_AVATARS` | 25 | `{[name]: string}` 头像路径 |
+| `WEAPON_AVATARS` | 67 | `{[name]: string}` |
+| `MATERIAL_ICONS` | 38 | `{[name]: string}` **材料的权威集合** |
+| `MATERIAL_COLUMNS` | 38 | `Object.keys(MATERIAL_ICONS)` 的运行时顺序 |
+| `FARM_ITEMS` | 15 | `{name, output}[]` （v1 暂不使用） |
+| `WEAPON_LIST` (weaponAdd.js) | 67 | `{name, star: 3|4|5|6}[]` |
 
-```bash
-cd /Users/nobuokita/Desktop/ZMD
-git init
-git branch -M main
-```
+### 材料完整清单（38 种）
 
-- [ ] **Step 2: 写根 .gitignore**
+- **货币**：`折金票`
+- **EXP 虚拟物品**（不存库存，从卡片换算）：`作战记录经验值`, `认知载体经验值`, `武器经验值`
+- **EXP 卡片**：`高级作战记录`(10000), `中级作战记录`(1000), `初级作战记录`(200), `高级认知载体`(10000), `初级认知载体`(1000), `武器检查单元`(200), `武器检查装置`(1000), `武器检查套组`(10000)
+- **精英阶段**：`协议圆盘组`, `协议圆盘`, `轻红柱状菌`, `中红柱状菌`, `重红柱状菌`
+- **技能/天赋/基建**：`协议棱柱组`, `协议棱柱`, `晶化多齿叶`, `纯晶多齿叶`, `至晶多齿叶`
+- **高级材料（5 种）**：`三相纳米片`, `象限拟合液`, `快子遴捡晶格`, `D96钢样品四`, `超距辉映管`
+- **武器破限**：`轻黯石`, `中黯石`, `重黯石`, `强固模具`, `重型强固模具`
+- **Boss/稀有掉落**：`血菌`, `受蚀玉化叶`, `燎石`, `星门菌`, `岩天使叶`, `武陵石`, `存续的痕迹`
 
-```bash
-cat > .gitignore <<'EOF'
-# Dependencies
-node_modules/
-**/.venv/
-__pycache__/
-*.pyc
+### 升级项目完整列表（10 种）
 
-# Build outputs
-frontend/dist/
-frontend/.vite/
+`精0等级`, `精1等级`, `精2等级`, `精3等级`, `精4等级`, `精英阶段`, `装备适配`, `能力值（信赖）`, `天赋`, `基建`, `技能1`, `技能2`, `技能3`, `技能4`
 
-# Reference repos (cloned read-only, never committed)
-reference/
+### 关键计算规则（见 utils.js）
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Editor
-.idea/
-.vscode/
-*.swp
-
-# Local env
-.env
-.env.local
-EOF
-```
-
-- [ ] **Step 3: Clone 参考 repo 到 `reference/`（不提交）**
-
-```bash
-mkdir -p reference
-git clone https://github.com/CaffuChin0/zmdgraph.git reference/zmdgraph
-git clone https://github.com/MaaEnd/MaaEnd.git reference/MaaEnd
-```
-
-- [ ] **Step 4: 写占位 README**
-
-```bash
-cat > README.md <<'EOF'
-# ZMD — 终末地养成规划器（本地版）
-
-自用的《明日方舟：终末地》养成规划器。基于 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的数据与计算逻辑重写，后续加入截图识别功能。
-
-状态：开发中。
-
-详见 `docs/superpowers/specs/2026-04-17-zmd-planner-design.md`。
-EOF
-```
-
-- [ ] **Step 5: 确认参考数据可读**
-
-```bash
-ls reference/zmdgraph/js/
-# 应该能看到 data.js planner.js stock.js operatorAdd.js 等
-```
-
-如果克隆失败或目录下看不到预期文件，**停下来**排查（网络/协议变更）再继续。
-
-- [ ] **Step 6: 首次提交**
-
-```bash
-git add .gitignore README.md docs/
-git commit -m "chore: init repo with spec and gitignore"
-```
+1. **查找 DATABASE 行**：先按 `干员 === name` 找，找不到回退 `干员 === ""`。
+2. **连续级求和**：若 (from, to) 没精确匹配行，尝试按每 1 级一行求和（如 skill 1→12 = 1→2 + 2→3 + ... + 11→12）。
+3. **等级材料**（`calculateLevelMaterials`）：遍历 5 段（精0-精4），取重叠区间 `[max(from, bandStart), min(to, bandEnd)]`，逐级求和折金票和 EXP。
+4. **EXP 卡片换算**（`convertRecordExpToMaterials` / `convertCognitionExpToMaterials`）：给定总 EXP 数字，贪心拆成 `高级作战记录 / 中级作战记录 / 初级作战记录`（或认知载体等价）。
+5. **技能名映射**：`SKILL_MAPPING[op][技能N] === 显示名`；反过来：给定操作员 + 技能显示名，查出 `技能N` 的 generic key。
 
 ---
 
-## Task 2：Scaffold 前端（Vite + React + TS）
+## Tasks 1-3（已完成，不重做）
 
-**Files:**
-- Create: `frontend/`（整个目录由 Vite 脚手架生成）
-- Modify: `frontend/tsconfig.json`, `frontend/vite.config.ts`
-
-- [ ] **Step 1: 用 Vite 创建项目**
-
-```bash
-cd /Users/nobuokita/Desktop/ZMD
-pnpm create vite@latest frontend -- --template react-ts
-cd frontend
-pnpm install
-```
-
-如果用户没装 pnpm：`npm install -g pnpm` 或者把后续所有 `pnpm` 命令换成 `npm`。
-
-- [ ] **Step 2: 删掉 Vite 默认样本**
-
-```bash
-rm src/App.css src/assets/react.svg public/vite.svg
-```
-
-- [ ] **Step 3: 替换 `src/App.tsx` 为最小 hello**
-
-```tsx
-// frontend/src/App.tsx
-function App() {
-  return <div className="p-8 text-2xl">ZMD — 终末地规划器</div>;
-}
-
-export default App;
-```
-
-- [ ] **Step 4: 验证 Vite 能起**
-
-```bash
-pnpm dev
-# 打开 http://localhost:5173，能看到 "ZMD — 终末地规划器"
-# Ctrl+C 停掉
-```
-
-- [ ] **Step 5: 配置 `@/` 别名指向 `src/`（shadcn/ui 需要）**
-
-编辑 `frontend/tsconfig.json`，在 `compilerOptions` 里加：
-
-```json
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
-```
-
-编辑 `frontend/tsconfig.node.json`，确保 `compilerOptions` 里有 `"composite": true`。
-
-编辑 `frontend/vite.config.ts`：
-
-```ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'node:path';
-
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-});
-```
-
-- [ ] **Step 6: 再跑一次验证**
-
-```bash
-pnpm dev
-# Ctrl+C
-```
-
-- [ ] **Step 7: 提交**
-
-```bash
-cd ..
-git add frontend/
-git commit -m "feat(frontend): scaffold Vite + React + TS"
-```
+- [x] **Task 1**：初始化 git、.gitignore、clone reference/zmdgraph 和 MaaEnd、首次 commit
+- [x] **Task 2**：Vite 8 + React 19 + TS 6 scaffold，`@/` 别名
+- [x] **Task 3**：Tailwind v3 + shadcn/ui（button/card/input/label/table/tabs/dialog/sonner）
 
 ---
 
-## Task 3：安装 Tailwind + shadcn/ui
-
-**Files:**
-- Create: `frontend/tailwind.config.js`, `frontend/postcss.config.js`
-- Modify: `frontend/src/index.css`
-- Create: `frontend/components.json`（shadcn 配置）
-- Create: `frontend/src/lib/utils.ts`
-
-- [ ] **Step 1: 装 Tailwind**
-
-```bash
-cd frontend
-pnpm add -D tailwindcss@3 postcss autoprefixer
-pnpm exec tailwindcss init -p
-```
-
-- [ ] **Step 2: 配置 `tailwind.config.js`**
-
-覆盖为：
-
-```js
-/** @type {import('tailwindcss').Config} */
-export default {
-  darkMode: ['class'],
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
-  theme: {
-    extend: {
-      colors: {
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
-        primary: {
-          DEFAULT: 'hsl(var(--primary))',
-          foreground: 'hsl(var(--primary-foreground))',
-        },
-        secondary: {
-          DEFAULT: 'hsl(var(--secondary))',
-          foreground: 'hsl(var(--secondary-foreground))',
-        },
-        muted: {
-          DEFAULT: 'hsl(var(--muted))',
-          foreground: 'hsl(var(--muted-foreground))',
-        },
-        accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
-        },
-        destructive: {
-          DEFAULT: 'hsl(var(--destructive))',
-          foreground: 'hsl(var(--destructive-foreground))',
-        },
-        card: {
-          DEFAULT: 'hsl(var(--card))',
-          foreground: 'hsl(var(--card-foreground))',
-        },
-      },
-      borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
-      },
-    },
-  },
-  plugins: [],
-};
-```
-
-- [ ] **Step 3: 替换 `src/index.css` 为 shadcn 规范的 CSS 变量**
-
-```css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-}
-```
-
-- [ ] **Step 4: 装 shadcn/ui 依赖工具**
-
-```bash
-pnpm add class-variance-authority clsx tailwind-merge lucide-react
-pnpm add tailwindcss-animate
-```
-
-在 `tailwind.config.js` 的 `plugins` 数组里加 `require('tailwindcss-animate')`。因为是 ESM 配置文件，改成：
-
-```js
-import animate from 'tailwindcss-animate';
-export default {
-  // ...
-  plugins: [animate],
-};
-```
-
-- [ ] **Step 5: 创建 `src/lib/utils.ts`**
-
-```ts
-import { type ClassValue, clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-```
-
-- [ ] **Step 6: 初始化 shadcn/ui 元数据**
-
-手动创建 `frontend/components.json`：
-
-```json
-{
-  "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "default",
-  "rsc": false,
-  "tsx": true,
-  "tailwind": {
-    "config": "tailwind.config.js",
-    "css": "src/index.css",
-    "baseColor": "zinc",
-    "cssVariables": true,
-    "prefix": ""
-  },
-  "aliases": {
-    "components": "@/components",
-    "utils": "@/lib/utils"
-  }
-}
-```
-
-- [ ] **Step 7: 安装第一批常用组件**
-
-```bash
-pnpm dlx shadcn@latest add button card input label table tabs dialog toast sonner
-```
-
-如有交互提示，一路接受默认。
-
-- [ ] **Step 8: 用 Button 验证样式生效**
-
-改 `src/App.tsx`：
-
-```tsx
-import { Button } from '@/components/ui/button';
-
-function App() {
-  return (
-    <div className="min-h-screen flex items-center justify-center gap-4">
-      <h1 className="text-2xl font-semibold">ZMD</h1>
-      <Button>测试按钮</Button>
-    </div>
-  );
-}
-
-export default App;
-```
-
-- [ ] **Step 9: 再跑验证**
-
-```bash
-pnpm dev
-# 按钮应该是 shadcn 风格（圆角、hover 效果）
-# Ctrl+C
-```
-
-- [ ] **Step 10: 提交**
-
-```bash
-cd ..
-git add frontend/
-git commit -m "feat(frontend): add Tailwind + shadcn/ui"
-```
-
----
-
-## Task 4：移植材料数据（materials）
+## Task 4：移植材料列表 + EXP 换算表
 
 **Files:**
 - Create: `frontend/src/data/materials.ts`
 - Create: `frontend/src/data/types.ts`
+- Create: `frontend/src/data/materials.test.ts`
+- Create: `frontend/scripts/port-data.mjs`（端口脚本，未来 sync 时复用）
 
-背景：zmdgraph 的 `reference/zmdgraph/js/data.js` 里用 JS 对象定义了所有材料，形如 `{ id, name, icon, tier, ... }`。我们把它翻译成强类型 TS。
+**思路**：写个 Node ESM 脚本，用 `eval` 或 regex 把 `reference/zmdgraph/js/data.js` 里的关键 const 抽出来，`JSON.stringify` 后以 TS 文件写到 `src/data/`。脚本落盘到 `frontend/scripts/port-data.mjs` 长期保留。
 
-- [ ] **Step 1: 读 zmdgraph 的材料定义**
-
-```bash
-less reference/zmdgraph/js/data.js
-# 定位到材料列表，记录每个材料对象的字段名和取值
-# 如果字段名是中文 key，保留原字段名；如果是英文，直接沿用
-```
-
-- [ ] **Step 2: 写类型定义 `src/data/types.ts`**
-
-```ts
-// frontend/src/data/types.ts
-export type MaterialId = string;
-export type OperatorId = string;
-export type WeaponId = string;
-
-export interface Material {
-  id: MaterialId;
-  name: string;        // 中文名
-  tier: number;        // 稀有度/星级
-  iconKey: string;     // 前端图标查找键（文件名不带扩展名）
-  category?: string;   // 作战记录 / 突破材料 / 等等
-}
-
-/** 某一级升到下一级的消耗。null 表示未知或不适用。 */
-export interface LevelCost {
-  exp: number;
-  coin: number;        // 金币或同等通货
-  materials?: { [id: MaterialId]: number };
-}
-
-export interface AscensionCost {
-  stage: number;       // 当前阶段
-  materials: { [id: MaterialId]: number };
-  coin: number;
-}
-```
-
-- [ ] **Step 3: 写 `src/data/materials.ts`，把 zmdgraph 里所有材料机械复制过来**
-
-模板：
-
-```ts
-// frontend/src/data/materials.ts
-import type { Material } from './types';
-
-export const MATERIALS: Material[] = [
-  // 例：从 zmdgraph data.js 逐条翻译
-  { id: 'exp_t3', name: '中级作战记录', tier: 3, iconKey: 'exp_t3', category: 'exp' },
-  { id: 'coin',   name: '龙门币',       tier: 1, iconKey: 'coin',   category: 'currency' },
-  // ... 其他所有材料
-];
-
-export const MATERIAL_BY_ID: Record<string, Material> = Object.fromEntries(
-  MATERIALS.map((m) => [m.id, m]),
-);
-```
-
-**要求**：
-- zmdgraph `data.js` 里有多少条材料，这里就要有多少条，一一对应。
-- `id` 使用稳定 slug（全小写、下划线），不用中文，方便后续后端 JSON 对齐。
-- 如果原数据用中文 key 作 id，建立映射表 `src/data/legacy-id-map.ts` 记录 `中文名 → slug`，但主数据源用 slug。
-
-- [ ] **Step 4: 加一个 sanity 单测**
-
-`frontend/src/data/materials.test.ts`：
-
-```ts
-import { describe, expect, it } from 'vitest';
-import { MATERIALS, MATERIAL_BY_ID } from './materials';
-
-describe('materials data', () => {
-  it('has no duplicate ids', () => {
-    const ids = MATERIALS.map((m) => m.id);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('indexes every material', () => {
-    for (const m of MATERIALS) {
-      expect(MATERIAL_BY_ID[m.id]).toBe(m);
-    }
-  });
-
-  it('has at least 10 materials', () => {
-    expect(MATERIALS.length).toBeGreaterThanOrEqual(10);
-  });
-});
-```
-
-- [ ] **Step 5: 装 Vitest 并跑测试**
+- [ ] **Step 1：装测试依赖**
 
 ```bash
-cd frontend
+cd /Users/nobuokita/Desktop/ZMD/frontend
 pnpm add -D vitest @testing-library/react @testing-library/jest-dom jsdom
 ```
 
-在 `package.json` 的 `scripts` 里加：
+在 `package.json` 的 `scripts` 加：
 
 ```json
 "test": "vitest run",
 "test:watch": "vitest"
 ```
 
-在 `vite.config.ts` 补 `test` 字段：
+在 `vite.config.ts` 加 test 字段（保留现有 resolve/plugins）：
 
 ```ts
 /// <reference types="vitest" />
@@ -543,633 +110,965 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: { '@': path.resolve(__dirname, './src') },
-  },
-  test: {
-    environment: 'jsdom',
-    globals: true,
-  },
+  resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  test: { environment: 'jsdom', globals: true },
 });
 ```
 
+- [ ] **Step 2：写端口脚本 `scripts/port-data.mjs`**
+
+脚本要做：
+1. 读 `reference/zmdgraph/js/data.js`（相对仓库根为 `../reference/zmdgraph/js/data.js`）
+2. 用一个沙盒 `new Function(file + '; return {CHARACTER_LIST, SKILL_MAPPING, EXCEPTIONS, GENERAL_PROJECTS, DATABASE, WEAPON_EXP_VALUES, WEAPON_LEVEL_STAGES, WEAPON_BREAK_GENERAL, WEAPON_BREAK_4_BASE, WEAPON_BREAK_4_SPECIAL, OPERATOR_AVATARS, WEAPON_AVATARS, MATERIAL_ICONS};')()` 把所有 const 拉出来
+3. 同样方式处理 `weaponAdd.js`（只要 `WEAPON_LIST`）
+4. 把结果分别以 TS 文件写入 `src/data/*.ts`（见后续各 Task 指定的目标文件）
+5. 每个 TS 文件顶部加 `// Auto-generated from reference/zmdgraph/js/data.js — do not edit by hand.`
+
+**注意**：`data.js` 用的是 `const` 而不是 `export`，所以 `new Function` 结合返回对象字面量能拿到所有 const。不要用 `eval(file)`（污染作用域）。
+
+**Step 2.1：先只让 Task 4 用到的部分落盘**
+
+本任务只生成 `src/data/materials.ts`（其余 Task 5-7 调脚本再生成）。
+
+脚本暴露 CLI 参数，比如 `node scripts/port-data.mjs materials` 只写材料部分。后续 Task 调 `node scripts/port-data.mjs operators`、`weapons`、`database`。
+
+- [ ] **Step 3：运行端口脚本生成 materials.ts**
+
 ```bash
-pnpm test
-# 预期：3 个测试全部通过
+cd frontend
+node scripts/port-data.mjs materials
 ```
 
-- [ ] **Step 6: 提交**
+生成内容要点：
+```ts
+// frontend/src/data/materials.ts
+// Auto-generated from reference/zmdgraph/js/data.js — do not edit by hand.
+
+export const MATERIAL_COLUMNS = [
+  "折金票", "高级作战记录", /* ...全部 38 个名字 */
+] as const;
+
+export type MaterialName = typeof MATERIAL_COLUMNS[number];
+
+export const MATERIAL_ICONS: Record<MaterialName, string> = {
+  "折金票": "images/折金票.png",
+  /* ... */
+};
+
+/** 这三种是 EXP 虚拟物品，从卡片数换算，不存库存。 */
+export const VIRTUAL_EXP_MATERIALS = new Set<MaterialName>([
+  "作战记录经验值",
+  "认知载体经验值",
+  "武器经验值",
+]);
+
+/** EXP 卡片 → EXP 值，用于换算 */
+export const EXP_CARD_VALUES = {
+  // 作战记录经验值卡片（前 80 级用）
+  record: {
+    "高级作战记录": 10000,
+    "中级作战记录": 1000,
+    "初级作战记录": 200,
+  },
+  // 认知载体经验值卡片（80+ 级用）
+  cognition: {
+    "高级认知载体": 10000,
+    "初级认知载体": 1000,
+  },
+  // 武器经验值卡片
+  weapon: {
+    "武器检查套组": 10000,
+    "武器检查装置": 1000,
+    "武器检查单元": 200,
+  },
+} as const;
+
+export type ExpType = keyof typeof EXP_CARD_VALUES;
+```
+
+- [ ] **Step 4：写 `src/data/types.ts`（公共类型）**
+
+```ts
+// frontend/src/data/types.ts
+import type { MaterialName } from './materials';
+
+export type OperatorName = string;
+export type WeaponName = string;
+
+/** 稀疏成本表，只含有非零材料 */
+export type CostMap = Partial<Record<MaterialName, number>>;
+
+/** 完整成本表，包含 EXP 虚拟材料的原始值（显示/聚合用） */
+export type FullCostMap = Partial<Record<MaterialName, number>>;
+
+export type UpgradeProject =
+  | '精0等级' | '精1等级' | '精2等级' | '精3等级' | '精4等级'
+  | '精英阶段' | '装备适配' | '能力值（信赖）' | '天赋' | '基建'
+  | '技能1' | '技能2' | '技能3' | '技能4';
+```
+
+- [ ] **Step 5：测试 `src/data/materials.test.ts`**
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { MATERIAL_COLUMNS, MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS, EXP_CARD_VALUES } from './materials';
+
+describe('materials data', () => {
+  it('has exactly 38 materials', () => {
+    expect(MATERIAL_COLUMNS.length).toBe(38);
+  });
+
+  it('MATERIAL_ICONS has icon for every column', () => {
+    for (const m of MATERIAL_COLUMNS) {
+      expect(MATERIAL_ICONS[m]).toBeTruthy();
+    }
+  });
+
+  it('includes the three virtual EXP materials', () => {
+    expect(VIRTUAL_EXP_MATERIALS.has('作战记录经验值')).toBe(true);
+    expect(VIRTUAL_EXP_MATERIALS.has('认知载体经验值')).toBe(true);
+    expect(VIRTUAL_EXP_MATERIALS.has('武器经验值')).toBe(true);
+  });
+
+  it('EXP card values match upstream', () => {
+    expect(EXP_CARD_VALUES.record['高级作战记录']).toBe(10000);
+    expect(EXP_CARD_VALUES.weapon['武器检查单元']).toBe(200);
+  });
+
+  it('has no duplicate columns', () => {
+    expect(new Set(MATERIAL_COLUMNS).size).toBe(MATERIAL_COLUMNS.length);
+  });
+});
+```
+
+- [ ] **Step 6：跑测试**
 
 ```bash
-cd ..
+cd frontend && pnpm test -- materials
+# 预期全部 PASS
+```
+
+- [ ] **Step 7：提交**
+
+```bash
+cd /Users/nobuokita/Desktop/ZMD
 git add frontend/
-git commit -m "feat(data): port materials from zmdgraph"
+git commit -m "feat(data): port materials (38 items) and EXP conversion tables"
 ```
 
 ---
 
-## Task 5：移植干员数据（operators）
+## Task 5：移植干员元数据
 
 **Files:**
 - Create: `frontend/src/data/operators.ts`
-- Create: `frontend/src/data/operator-costs.ts`
+- Create: `frontend/src/data/operators.test.ts`
+- Modify: `frontend/scripts/port-data.mjs`（加 operators case）
 
-zmdgraph 的 `js/data.js` 里有干员对象（包含等级消耗曲线和突破材料）。
+- [ ] **Step 1：扩展端口脚本，加 operators case**
 
-- [ ] **Step 1: 定义干员类型（扩展 `src/data/types.ts`）**
-
-在 `src/data/types.ts` 末尾加：
-
-```ts
-export type Profession = 'vanguard' | 'guard' | 'sniper' | 'caster' | 'medic' | 'defender' | 'specialist' | 'supporter' | string;
-
-export interface Operator {
-  id: OperatorId;
-  name: string;
-  rarity: number;          // 1-6
-  profession: Profession;
-  portraitKey: string;
-  maxAscension: number;    // 通常 2 或 3
-}
-
-/** 每个 rarity+ascension 下的等级消耗曲线。 */
-export interface OperatorLevelCurve {
-  rarity: number;
-  ascension: number;
-  /** levelCosts[n] 表示 n → n+1 级的消耗。长度 = 该阶段最大等级 - 1。 */
-  levelCosts: LevelCost[];
-}
-
-export interface OperatorAscensionCost extends AscensionCost {
-  rarity: number;          // 该突破所属稀有度
-}
-```
-
-- [ ] **Step 2: 写 `src/data/operators.ts`**
+`node scripts/port-data.mjs operators` 生成 `src/data/operators.ts`：
 
 ```ts
 // frontend/src/data/operators.ts
-import type { Operator } from './types';
+// Auto-generated from reference/zmdgraph/js/data.js — do not edit by hand.
 
-export const OPERATORS: Operator[] = [
-  // 例
-  { id: 'angelina', name: '安洁莉娜', rarity: 6, profession: 'supporter', portraitKey: 'angelina', maxAscension: 2 },
-  // ... 全部
+export const CHARACTER_LIST = [
+  "洛茜", "汤汤", /* ... 25 个 */
+] as const;
+
+export const SKILL_MAPPING = [
+  { 干员: "洛茜", 技能1: "普攻:沸腾狼血", 技能2: "战技:血红之影", 技能3: "连携:燎影时刻", 技能4: "大招:“利爪”奇袭" },
+  /* ... 全部 25 条 */
 ];
 
-export const OPERATOR_BY_ID: Record<string, Operator> = Object.fromEntries(
-  OPERATORS.map((o) => [o.id, o]),
-);
+export const EXCEPTIONS = [
+  { 干员: "管理员", 排除项目: "基建" },
+];
+
+export const OPERATOR_AVATARS: Record<string, string> = {
+  "洛茜": "images/...",
+  /* ... */
+};
 ```
 
-- [ ] **Step 3: 写 `src/data/operator-costs.ts`**
+**Step 1.1：加一个手写 helper（不在自动生成里）**
 
 ```ts
-// frontend/src/data/operator-costs.ts
-import type { OperatorLevelCurve, OperatorAscensionCost } from './types';
+// frontend/src/data/operators.ts（底部，手写区）
 
-/** 按 rarity 和 ascension 索引。 */
-export const LEVEL_CURVES: OperatorLevelCurve[] = [
-  // {
-  //   rarity: 6, ascension: 0,
-  //   levelCosts: [
-  //     { exp: 100, coin: 50 }, { exp: 110, coin: 55 }, ...
-  //   ]
-  // },
-  // ... 所有 rarity × ascension 组合，照抄 zmdgraph
-];
+import type { OperatorName } from './types';
 
-export const ASCENSION_COSTS: OperatorAscensionCost[] = [
-  // { rarity: 6, stage: 1, coin: 30000, materials: { 'mat_a': 5, 'mat_b': 3 } },
-  // ...
-];
-
-export function getLevelCurve(rarity: number, ascension: number) {
-  return LEVEL_CURVES.find((c) => c.rarity === rarity && c.ascension === ascension);
+/**
+ * 把技能显示名（如"战技:血红之影"）映射回 generic key "技能2"。
+ * 找不到返回 null。
+ */
+export function mapSkillDisplayToGeneric(operator: OperatorName, displayName: string): '技能1' | '技能2' | '技能3' | '技能4' | null {
+  const row = SKILL_MAPPING.find((r) => r.干员 === operator);
+  if (!row) return null;
+  for (const key of ['技能1', '技能2', '技能3', '技能4'] as const) {
+    if (row[key] === displayName) return key;
+  }
+  return null;
 }
 
-export function getAscensionCost(rarity: number, stage: number) {
-  return ASCENSION_COSTS.find((c) => c.rarity === rarity && c.stage === stage);
+/** 给定干员和升级项目，判断是否被 EXCEPTIONS 排除。 */
+export function isProjectExcluded(operator: OperatorName, project: string): boolean {
+  return EXCEPTIONS.some((e) => e.干员 === operator && e.排除项目 === project);
 }
 ```
 
-**要求**：zmdgraph 有多少稀有度×突破组合，这里就要有多少条；每个 `levelCosts` 数组长度等于该稀有度该突破阶段的最大等级减一。
+自动生成部分和手写 helper 之间加一条清晰注释分隔线。**端口脚本不能覆盖手写 helper**：脚本应把手写代码读出来追加回去，或者把手写 helper 放到单独文件 `src/data/operators-helpers.ts`。更简单的方案：**把手写 helper 放到 `operators-helpers.ts`，`operators.ts` 只放自动生成**。选后者。
 
-- [ ] **Step 4: 单测**
+所以实际文件结构：
+- `frontend/src/data/operators.ts`（自动生成，端口脚本可覆盖）
+- `frontend/src/data/operators-helpers.ts`（手写，脚本永不动）
 
-`frontend/src/data/operators.test.ts`：
+- [ ] **Step 2：运行端口脚本**
+
+```bash
+cd frontend && node scripts/port-data.mjs operators
+```
+
+- [ ] **Step 3：测试 `src/data/operators.test.ts`**
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import { OPERATORS, OPERATOR_BY_ID } from './operators';
-import { LEVEL_CURVES, ASCENSION_COSTS, getLevelCurve } from './operator-costs';
+import { CHARACTER_LIST, SKILL_MAPPING, EXCEPTIONS, OPERATOR_AVATARS } from './operators';
+import { mapSkillDisplayToGeneric, isProjectExcluded } from './operators-helpers';
 
 describe('operators data', () => {
-  it('has no duplicate ids', () => {
-    const ids = OPERATORS.map((o) => o.id);
-    expect(new Set(ids).size).toBe(ids.length);
+  it('has 25 characters', () => {
+    expect(CHARACTER_LIST.length).toBe(25);
   });
 
-  it('every operator rarity has a level curve for ascension 0', () => {
-    const rarities = new Set(OPERATORS.map((o) => o.rarity));
-    for (const r of rarities) {
-      expect(getLevelCurve(r, 0)).toBeDefined();
+  it('SKILL_MAPPING covers every character', () => {
+    for (const name of CHARACTER_LIST) {
+      expect(SKILL_MAPPING.find((r) => r.干员 === name)).toBeDefined();
     }
   });
 
-  it('ascension costs align with operator maxAscension', () => {
-    const rarities = new Set(OPERATORS.map((o) => o.rarity));
-    for (const r of rarities) {
-      const op = OPERATORS.find((o) => o.rarity === r)!;
-      for (let stage = 1; stage <= op.maxAscension; stage++) {
-        expect(ASCENSION_COSTS.find((c) => c.rarity === r && c.stage === stage)).toBeDefined();
+  it('OPERATOR_AVATARS covers every character', () => {
+    for (const name of CHARACTER_LIST) {
+      expect(OPERATOR_AVATARS[name]).toBeTruthy();
+    }
+  });
+
+  it('mapSkillDisplayToGeneric resolves display names', () => {
+    // 从实际数据选一条
+    const any = SKILL_MAPPING[0];
+    expect(mapSkillDisplayToGeneric(any.干员, any.技能1)).toBe('技能1');
+    expect(mapSkillDisplayToGeneric(any.干员, '不存在的技能')).toBeNull();
+  });
+
+  it('isProjectExcluded matches known exception', () => {
+    expect(isProjectExcluded('管理员', '基建')).toBe(true);
+    expect(isProjectExcluded('洛茜', '基建')).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 4：跑测试 + 提交**
+
+```bash
+cd frontend && pnpm test -- operators
+cd ..
+git add frontend/
+git commit -m "feat(data): port operators metadata and skill mapping"
+```
+
+---
+
+## Task 6：移植武器元数据和武器成本表
+
+**Files:**
+- Create: `frontend/src/data/weapons.ts`（自动生成）
+- Create: `frontend/src/data/weapons.test.ts`
+- Modify: `frontend/scripts/port-data.mjs`
+
+- [ ] **Step 1：扩展端口脚本，加 weapons case**
+
+```bash
+cd frontend && node scripts/port-data.mjs weapons
+```
+
+生成内容：
+
+```ts
+// frontend/src/data/weapons.ts
+// Auto-generated — do not edit by hand.
+
+export type WeaponStar = 3 | 4 | 5 | 6;
+
+export const WEAPON_LIST = [
+  { name: "晨光之刃", star: 5 }, /* ... 67 个 */
+] as const;
+
+export const WEAPON_AVATARS: Record<string, string> = { /* ... */ };
+
+export const WEAPON_LEVEL_STAGES = [
+  { from: 1, to: 2, 武器经验值: 100, 折金票: 50 },
+  /* ... 89 行 */
+] as const;
+
+export const WEAPON_BREAK_GENERAL = {
+  1: { 折金票: 2200, 强固模具: 5, 轻黯石: 3 },
+  2: { 折金票: 8500, 强固模具: 18, 中黯石: 5 },
+  3: { 折金票: 25000, 重型强固模具: 20, 重黯石: 5 },
+} as const;
+
+export const WEAPON_BREAK_4_BASE = { 折金票: 90000, 重型强固模具: 30 } as const;
+
+export const WEAPON_BREAK_4_SPECIAL: Record<string, Partial<Record<string, number>>> = {
+  "晨光之刃": { 三相纳米片: 16, 燎石: 8 },
+  /* ... 每个武器一行 */
+};
+```
+
+- [ ] **Step 2：测试 `src/data/weapons.test.ts`**
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { WEAPON_LIST, WEAPON_LEVEL_STAGES, WEAPON_BREAK_GENERAL, WEAPON_BREAK_4_BASE, WEAPON_BREAK_4_SPECIAL, WEAPON_AVATARS } from './weapons';
+
+describe('weapons data', () => {
+  it('has 67 weapons', () => {
+    expect(WEAPON_LIST.length).toBe(67);
+  });
+
+  it('every weapon has star 3-6', () => {
+    for (const w of WEAPON_LIST) {
+      expect([3, 4, 5, 6]).toContain(w.star);
+    }
+  });
+
+  it('WEAPON_LEVEL_STAGES covers 1→90', () => {
+    const firstFrom = WEAPON_LEVEL_STAGES[0].from;
+    const lastTo = WEAPON_LEVEL_STAGES[WEAPON_LEVEL_STAGES.length - 1].to;
+    expect(firstFrom).toBe(1);
+    expect(lastTo).toBe(90);
+    expect(WEAPON_LEVEL_STAGES.length).toBe(89);
+  });
+
+  it('WEAPON_BREAK_GENERAL has three stages', () => {
+    expect(Object.keys(WEAPON_BREAK_GENERAL)).toEqual(['1', '2', '3']);
+  });
+
+  it('WEAPON_BREAK_4_SPECIAL has entry for every weapon', () => {
+    for (const w of WEAPON_LIST) {
+      expect(WEAPON_BREAK_4_SPECIAL[w.name]).toBeDefined();
+    }
+  });
+
+  it('WEAPON_AVATARS covers every weapon', () => {
+    for (const w of WEAPON_LIST) {
+      expect(WEAPON_AVATARS[w.name]).toBeTruthy();
+    }
+  });
+});
+```
+
+- [ ] **Step 3：跑测试 + 提交**
+
+```bash
+cd frontend && pnpm test -- weapons
+cd ..
+git add frontend/
+git commit -m "feat(data): port weapons metadata and cost tables"
+```
+
+---
+
+## Task 7：移植 DATABASE（697 行升级成本表）
+
+**Files:**
+- Create: `frontend/src/data/database.ts`（自动生成）
+- Create: `frontend/src/data/database.test.ts`
+- Modify: `frontend/scripts/port-data.mjs`
+
+- [ ] **Step 1：扩展端口脚本，加 database case**
+
+生成：
+
+```ts
+// frontend/src/data/database.ts
+// Auto-generated — do not edit by hand. ~697 rows.
+
+import type { UpgradeProject } from './types';
+
+export interface UpgradeCostRow {
+  干员: string; // "" = generic
+  升级项目: UpgradeProject;
+  现等级: number;
+  目标等级: number;
+  // 以下全部可选，稀疏存在
+  折金票?: number;
+  作战记录经验值?: number;
+  认知载体经验值?: number;
+  [mat: string]: number | string | undefined;
+}
+
+export const DATABASE: UpgradeCostRow[] = [
+  { 干员: "", 升级项目: "精0等级", 现等级: 1, 目标等级: 2, 折金票: 0, 作战记录经验值: 20 },
+  /* ... 697 条 */
+];
+```
+
+脚本在写盘前按 `(升级项目, 干员, 现等级)` 顺序排一下，让 diff 稳定。
+
+```bash
+cd frontend && node scripts/port-data.mjs database
+```
+
+- [ ] **Step 2：测试 `src/data/database.test.ts`**
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { DATABASE } from './database';
+import { MATERIAL_COLUMNS } from './materials';
+
+describe('DATABASE', () => {
+  it('has at least 600 rows', () => {
+    expect(DATABASE.length).toBeGreaterThanOrEqual(600);
+  });
+
+  it('every row has basic structure', () => {
+    for (const row of DATABASE) {
+      expect(typeof row.干员).toBe('string');
+      expect(typeof row.升级项目).toBe('string');
+      expect(typeof row.现等级).toBe('number');
+      expect(typeof row.目标等级).toBe('number');
+      expect(row.目标等级).toBeGreaterThan(row.现等级);
+    }
+  });
+
+  it('every material field key is in MATERIAL_COLUMNS', () => {
+    const allowed = new Set<string>([...MATERIAL_COLUMNS, '干员', '升级项目', '现等级', '目标等级']);
+    for (const row of DATABASE) {
+      for (const key of Object.keys(row)) {
+        expect(allowed.has(key)).toBe(true);
       }
     }
   });
-});
-```
 
-```bash
-cd frontend && pnpm test
-# 预期：新测试通过
-```
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd ..
-git add frontend/
-git commit -m "feat(data): port operators and level/ascension costs"
-```
-
----
-
-## Task 6：移植武器数据（weapons）
-
-**Files:**
-- Create: `frontend/src/data/weapons.ts`
-- Create: `frontend/src/data/weapon-costs.ts`
-
-结构跟 Task 5 类似，但武器数据可能更简单（没有"职业"概念）。
-
-- [ ] **Step 1: 扩展类型**
-
-在 `src/data/types.ts` 加：
-
-```ts
-export interface Weapon {
-  id: WeaponId;
-  name: string;
-  rarity: number;
-  iconKey: string;
-  maxAscension: number;
-}
-
-export interface WeaponLevelCurve {
-  rarity: number;
-  ascension: number;
-  levelCosts: LevelCost[];
-}
-
-export interface WeaponAscensionCost extends AscensionCost {
-  rarity: number;
-}
-```
-
-- [ ] **Step 2: 写 `src/data/weapons.ts` 和 `src/data/weapon-costs.ts`**
-
-结构完全复制 operators 那套模式（参照 Task 5 Step 2 和 Step 3 的代码），字段名从 `Operator` 换成 `Weapon`，数据从 zmdgraph 武器部分照抄。
-
-`src/data/weapons.ts`：
-
-```ts
-import type { Weapon } from './types';
-
-export const WEAPONS: Weapon[] = [
-  // { id: 'blade_of_dawn', name: '晨光之刃', rarity: 5, iconKey: 'blade_of_dawn', maxAscension: 2 },
-  // ...
-];
-
-export const WEAPON_BY_ID: Record<string, Weapon> = Object.fromEntries(
-  WEAPONS.map((w) => [w.id, w]),
-);
-```
-
-`src/data/weapon-costs.ts`：
-
-```ts
-import type { WeaponLevelCurve, WeaponAscensionCost } from './types';
-
-export const WEAPON_LEVEL_CURVES: WeaponLevelCurve[] = [
-  // ...
-];
-
-export const WEAPON_ASCENSION_COSTS: WeaponAscensionCost[] = [
-  // ...
-];
-
-export function getWeaponLevelCurve(rarity: number, ascension: number) {
-  return WEAPON_LEVEL_CURVES.find((c) => c.rarity === rarity && c.ascension === ascension);
-}
-
-export function getWeaponAscensionCost(rarity: number, stage: number) {
-  return WEAPON_ASCENSION_COSTS.find((c) => c.rarity === rarity && c.stage === stage);
-}
-```
-
-- [ ] **Step 3: 单测**
-
-`frontend/src/data/weapons.test.ts`：
-
-```ts
-import { describe, expect, it } from 'vitest';
-import { WEAPONS } from './weapons';
-import { WEAPON_LEVEL_CURVES, getWeaponLevelCurve } from './weapon-costs';
-
-describe('weapons data', () => {
-  it('has no duplicate ids', () => {
-    const ids = WEAPONS.map((w) => w.id);
-    expect(new Set(ids).size).toBe(ids.length);
+  it('includes rows for all 精0-精4等级', () => {
+    for (const band of ['精0等级', '精1等级', '精2等级', '精3等级', '精4等级'] as const) {
+      expect(DATABASE.some((r) => r.升级项目 === band)).toBe(true);
+    }
   });
 
-  it('every rarity has an ascension-0 curve', () => {
-    const rarities = new Set(WEAPONS.map((w) => w.rarity));
-    for (const r of rarities) {
-      expect(getWeaponLevelCurve(r, 0)).toBeDefined();
+  it('has 精英阶段 stage 3→4 entries for every character', () => {
+    const { CHARACTER_LIST } = require('./operators');
+    for (const name of CHARACTER_LIST) {
+      expect(
+        DATABASE.some(
+          (r) => r.干员 === name && r.升级项目 === '精英阶段' && r.现等级 === 3 && r.目标等级 === 4,
+        ),
+      ).toBe(true);
     }
   });
 });
 ```
 
-```bash
-cd frontend && pnpm test
-```
-
-- [ ] **Step 4: 提交**
+- [ ] **Step 3：跑测试 + 提交**
 
 ```bash
+cd frontend && pnpm test -- database
 cd ..
 git add frontend/
-git commit -m "feat(data): port weapons and weapon costs"
+git commit -m "feat(data): port 697-row DATABASE upgrade cost table"
 ```
 
 ---
 
-## Task 7：规划计算逻辑（纯函数 TDD）
+## Task 8：成本计算逻辑（TDD）
 
 **Files:**
-- Create: `frontend/src/logic/planner.ts`
-- Create: `frontend/src/logic/planner.test.ts`
+- Create: `frontend/src/logic/cost-calc.ts`
+- Create: `frontend/src/logic/cost-calc.test.ts`
+- Create: `frontend/src/logic/exp-conversion.ts`
+- Create: `frontend/src/logic/exp-conversion.test.ts`
 
-核心计算：给定某个干员（或武器）"当前 level/ascension → 目标 level/ascension"，聚合所有消耗成一个 `{material_id → count}` 映射。
+**参考上游**：`reference/zmdgraph/js/utils.js` 里的 `calculateMaterials`、`calculateLevelMaterials`、`convertRecordExpToMaterials`、`convertCognitionExpToMaterials`。**先读懂再实现**。
 
-- [ ] **Step 1: 先写失败测试**
-
-`frontend/src/logic/planner.test.ts`：
+- [ ] **Step 1：先写 exp-conversion 的失败测试**
 
 ```ts
+// frontend/src/logic/exp-conversion.test.ts
+import { describe, expect, it } from 'vitest';
+import { convertExpToCards, sumExpCards } from './exp-conversion';
+
+describe('convertExpToCards (record/作战记录)', () => {
+  it('returns all zeros for zero exp', () => {
+    expect(convertExpToCards(0, 'record')).toEqual({});
+  });
+
+  it('greedy fills highest tier first', () => {
+    // 21000 EXP = 2 张高级 (20000) + 1 张中级 (1000)
+    expect(convertExpToCards(21000, 'record')).toEqual({
+      '高级作战记录': 2,
+      '中级作战记录': 1,
+    });
+  });
+
+  it('rounds up the lowest tier when not divisible', () => {
+    // 250 EXP = 2 张初级 (400)，向上取整到满足 ≥ 250
+    expect(convertExpToCards(250, 'record')['初级作战记录']).toBe(2);
+  });
+});
+
+describe('sumExpCards (inverse)', () => {
+  it('sums card counts to EXP', () => {
+    expect(sumExpCards({ '高级作战记录': 1, '中级作战记录': 2 }, 'record')).toBe(12000);
+  });
+});
+```
+
+- [ ] **Step 2：运行确认失败**
+
+```bash
+cd frontend && pnpm test -- exp-conversion
+# FAIL（模块不存在）
+```
+
+- [ ] **Step 3：实现 `exp-conversion.ts`**
+
+```ts
+// frontend/src/logic/exp-conversion.ts
+import { EXP_CARD_VALUES, type ExpType, type MaterialName } from '@/data/materials';
+
+/**
+ * 把一个 EXP 总数贪心拆成 EXP 卡片数。
+ * 从高到低分配，低级卡片向上取整以保证覆盖总量。
+ */
+export function convertExpToCards(exp: number, type: ExpType): Partial<Record<MaterialName, number>> {
+  if (exp <= 0) return {};
+  const table = EXP_CARD_VALUES[type];
+  const entries = Object.entries(table).sort((a, b) => b[1] - a[1]); // 高→低
+  const out: Partial<Record<MaterialName, number>> = {};
+  let remaining = exp;
+  for (let i = 0; i < entries.length - 1; i++) {
+    const [name, value] = entries[i];
+    const n = Math.floor(remaining / value);
+    if (n > 0) {
+      out[name as MaterialName] = n;
+      remaining -= n * value;
+    }
+  }
+  // 最低档向上取整
+  if (remaining > 0) {
+    const [lowestName, lowestValue] = entries[entries.length - 1];
+    out[lowestName as MaterialName] = Math.ceil(remaining / lowestValue);
+  }
+  return out;
+}
+
+export function sumExpCards(cards: Partial<Record<MaterialName, number>>, type: ExpType): number {
+  const table: Record<string, number> = EXP_CARD_VALUES[type];
+  let sum = 0;
+  for (const [name, count] of Object.entries(cards)) {
+    const v = table[name];
+    if (v && count) sum += v * count;
+  }
+  return sum;
+}
+```
+
+- [ ] **Step 4：跑测试通过**
+
+```bash
+pnpm test -- exp-conversion
+# PASS
+```
+
+- [ ] **Step 5：写 cost-calc 失败测试**
+
+```ts
+// frontend/src/logic/cost-calc.test.ts
 import { describe, expect, it } from 'vitest';
 import {
-  computeOperatorCost,
+  calculateProjectMaterials,
+  calculateLevelMaterials,
+  calculateWeaponLevelCost,
+  calculateWeaponBreakCost,
   aggregateCosts,
-  type CostMap,
-} from './planner';
+  emptyCost,
+} from './cost-calc';
 
-describe('computeOperatorCost', () => {
-  it('returns empty cost when current == target', () => {
-    const cost = computeOperatorCost({
-      operator_id: 'angelina',
-      current: { level: 30, ascension: 1 },
-      target: { level: 30, ascension: 1 },
-    });
-    expect(cost).toEqual({ exp: 0, coin: 0, materials: {} });
+describe('calculateProjectMaterials (精英阶段 generic)', () => {
+  it('returns generic row cost for stage 0→1', () => {
+    const cost = calculateProjectMaterials('洛茜', '精英阶段', 0, 1);
+    expect(cost).toBeTruthy();
+    expect(cost!.折金票).toBe(1600);
+    expect(cost!.协议圆盘).toBe(8);
   });
 
-  it('sums level costs within same ascension', () => {
-    // 假设 rarity-6 ascension-1 的 30→31 花 100 exp 50 coin，31→32 花 110 exp 55 coin
-    const cost = computeOperatorCost({
-      operator_id: 'angelina',
-      current: { level: 30, ascension: 1 },
-      target: { level: 32, ascension: 1 },
-    });
-    expect(cost.exp).toBe(210);
-    expect(cost.coin).toBe(105);
+  it('returns operator-specific cost for 精英阶段 stage 3→4', () => {
+    const cost = calculateProjectMaterials('洛茜', '精英阶段', 3, 4);
+    expect(cost).toBeTruthy();
+    expect(cost!.折金票).toBe(100000);
+  });
+});
+
+describe('calculateLevelMaterials', () => {
+  it('returns zero for identical current and target', () => {
+    expect(calculateLevelMaterials('洛茜', 30, 30)).toEqual({ 折金票: 0 });
   });
 
-  it('includes ascension cost when crossing ascension', () => {
-    const cost = computeOperatorCost({
-      operator_id: 'angelina',
-      current: { level: 50, ascension: 1 },
-      target: { level: 1, ascension: 2 },
-    });
-    // ascension cost 的 materials 必须体现
-    expect(Object.keys(cost.materials).length).toBeGreaterThan(0);
+  it('sums within a single band', () => {
+    const cost = calculateLevelMaterials('洛茜', 1, 3);
+    // 1→2 (20 exp, 0 coin) + 2→3 (30 exp, 0 coin) = 50 exp, 0 coin
+    expect(cost.作战记录经验值).toBe(50);
+    expect(cost.折金票).toBe(0);
+  });
+
+  it('spans bands (e.g., 18 → 22 crosses 精0→精1)', () => {
+    const cost = calculateLevelMaterials('洛茜', 18, 22);
+    expect(cost.折金票).toBeGreaterThan(0);
+    expect(cost.作战记录经验值).toBeGreaterThan(0);
+  });
+});
+
+describe('calculateWeaponLevelCost', () => {
+  it('sums 武器经验值 and 折金票 for a range', () => {
+    const cost = calculateWeaponLevelCost(1, 3);
+    expect(cost.武器经验值).toBeGreaterThan(0);
+    expect(cost.折金票).toBeGreaterThan(0);
+  });
+});
+
+describe('calculateWeaponBreakCost', () => {
+  it('applies generic for break 1-3', () => {
+    expect(calculateWeaponBreakCost('晨光之刃', 1)).toMatchObject({ 折金票: 2200, 强固模具: 5, 轻黯石: 3 });
+  });
+
+  it('applies base + special for break 4', () => {
+    const cost = calculateWeaponBreakCost('晨光之刃', 4);
+    expect(cost.折金票).toBe(90000);
+    expect(cost.重型强固模具).toBe(30);
+    // 特殊材料也应该在（具体值依赖数据）
   });
 });
 
 describe('aggregateCosts', () => {
   it('sums multiple cost maps', () => {
-    const a: CostMap = { exp: 100, coin: 50, materials: { mat_a: 2 } };
-    const b: CostMap = { exp: 50, coin: 20, materials: { mat_a: 1, mat_b: 3 } };
-    expect(aggregateCosts([a, b])).toEqual({
-      exp: 150,
-      coin: 70,
-      materials: { mat_a: 3, mat_b: 3 },
-    });
+    expect(
+      aggregateCosts([
+        { 折金票: 100, 协议棱柱: 5 },
+        { 折金票: 50, 协议棱柱: 3, 协议圆盘: 2 },
+      ]),
+    ).toEqual({ 折金票: 150, 协议棱柱: 8, 协议圆盘: 2 });
   });
 
-  it('returns zero for empty array', () => {
-    expect(aggregateCosts([])).toEqual({ exp: 0, coin: 0, materials: {} });
+  it('returns empty for empty input', () => {
+    expect(aggregateCosts([])).toEqual({});
   });
 });
 ```
 
-**注意**：第二个和第三个 `computeOperatorCost` 测试里的具体数字依赖于 Task 5 里填的 `LEVEL_CURVES`。如果实际数据不同，**在实现前先改成与你真实数据匹配的数字**。关键是测试结构要覆盖这三种场景。
+注意测试里的具体数字 (1600, 8, 20, 30, 50 等) 都必须与真实 DATABASE 数据一致。先跑一次测试看失败原因确认是"函数不存在"而不是"数字不对"。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [ ] **Step 6：运行确认失败**
 
 ```bash
-cd frontend && pnpm test -- planner
-# 预期：FAIL（模块不存在）
+pnpm test -- cost-calc
+# FAIL（模块不存在）
 ```
 
-- [ ] **Step 3: 实现 `src/logic/planner.ts`**
+- [ ] **Step 7：实现 `cost-calc.ts`**
 
 ```ts
-// frontend/src/logic/planner.ts
-import { getLevelCurve, getAscensionCost } from '@/data/operator-costs';
-import { OPERATOR_BY_ID } from '@/data/operators';
-import { getWeaponLevelCurve, getWeaponAscensionCost } from '@/data/weapon-costs';
-import { WEAPON_BY_ID } from '@/data/weapons';
-import type { MaterialId } from '@/data/types';
-
-export interface CostMap {
-  exp: number;
-  coin: number;
-  materials: Record<MaterialId, number>;
-}
+// frontend/src/logic/cost-calc.ts
+import { DATABASE, type UpgradeCostRow } from '@/data/database';
+import { WEAPON_LEVEL_STAGES, WEAPON_BREAK_GENERAL, WEAPON_BREAK_4_BASE, WEAPON_BREAK_4_SPECIAL } from '@/data/weapons';
+import { MATERIAL_COLUMNS, type MaterialName } from '@/data/materials';
+import type { CostMap, UpgradeProject, OperatorName, WeaponName } from '@/data/types';
 
 export function emptyCost(): CostMap {
-  return { exp: 0, coin: 0, materials: {} };
+  return {};
+}
+
+function addInto(target: Record<string, number>, key: string, val: number) {
+  if (!val) return;
+  target[key] = (target[key] ?? 0) + val;
 }
 
 export function addCost(a: CostMap, b: CostMap): CostMap {
-  const materials = { ...a.materials };
-  for (const [id, count] of Object.entries(b.materials)) {
-    materials[id] = (materials[id] ?? 0) + count;
+  const out: Record<string, number> = { ...a } as any;
+  for (const [k, v] of Object.entries(b)) {
+    if (typeof v === 'number' && v !== 0) {
+      out[k] = (out[k] ?? 0) + v;
+    }
   }
-  return { exp: a.exp + b.exp, coin: a.coin + b.coin, materials };
+  return out as CostMap;
 }
 
 export function aggregateCosts(costs: CostMap[]): CostMap {
   return costs.reduce((acc, c) => addCost(acc, c), emptyCost());
 }
 
-interface LevelPoint {
-  level: number;
-  ascension: number;
-}
-
-export interface OperatorPlan {
-  operator_id: string;
-  current: LevelPoint;
-  target: LevelPoint;
-}
-
-export interface WeaponPlan {
-  weapon_id: string;
-  current: LevelPoint;
-  target: LevelPoint;
-}
-
-/** 在同一 ascension 内从 current.level 到 target.level 的消耗。 */
-function computeLevelRangeCost(
-  rarity: number,
-  ascension: number,
-  fromLevel: number,
-  toLevel: number,
-  levelCurveFn: typeof getLevelCurve,
-): CostMap {
-  if (fromLevel >= toLevel) return emptyCost();
-  const curve = levelCurveFn(rarity, ascension);
-  if (!curve) {
-    throw new Error(`No level curve for rarity=${rarity} ascension=${ascension}`);
+/** 从 DATABASE 行抽取所有"材料字段"（不含干员/升级项目/现等级/目标等级），返回 CostMap。 */
+function extractRowCost(row: UpgradeCostRow): CostMap {
+  const out: Record<string, number> = {};
+  for (const col of MATERIAL_COLUMNS) {
+    const v = row[col];
+    if (typeof v === 'number' && v !== 0) out[col] = v;
   }
-  let acc = emptyCost();
-  for (let lv = fromLevel; lv < toLevel; lv++) {
-    const step = curve.levelCosts[lv - 1];
-    if (!step) throw new Error(`Missing level cost at lv=${lv} rarity=${rarity} asc=${ascension}`);
-    acc = addCost(acc, {
-      exp: step.exp,
-      coin: step.coin,
-      materials: step.materials ?? {},
-    });
+  return out as CostMap;
+}
+
+/**
+ * 查某干员某升级项目从 from 到 to 的消耗。
+ * 先试 operator-specific 精确匹配；再试 generic 精确匹配；再按连续单级求和（operator-specific 优先）。
+ * 找不到返回 null。
+ */
+export function calculateProjectMaterials(
+  operator: OperatorName,
+  project: UpgradeProject,
+  from: number,
+  to: number,
+): CostMap | null {
+  if (from === to) return emptyCost();
+
+  // 1) operator-specific exact
+  const opSpec = DATABASE.find(
+    (r) => r.干员 === operator && r.升级项目 === project && r.现等级 === from && r.目标等级 === to,
+  );
+  if (opSpec) return extractRowCost(opSpec);
+
+  // 2) generic exact
+  const generic = DATABASE.find(
+    (r) => r.干员 === '' && r.升级项目 === project && r.现等级 === from && r.目标等级 === to,
+  );
+  if (generic) return extractRowCost(generic);
+
+  // 3) sum consecutive single-level rows
+  let acc: CostMap = emptyCost();
+  for (let lv = from; lv < to; lv++) {
+    const row =
+      DATABASE.find(
+        (r) => r.干员 === operator && r.升级项目 === project && r.现等级 === lv && r.目标等级 === lv + 1,
+      ) ??
+      DATABASE.find(
+        (r) => r.干员 === '' && r.升级项目 === project && r.现等级 === lv && r.目标等级 === lv + 1,
+      );
+    if (!row) return null;
+    acc = addCost(acc, extractRowCost(row));
   }
   return acc;
 }
 
-export function computeOperatorCost(plan: OperatorPlan): CostMap {
-  const op = OPERATOR_BY_ID[plan.operator_id];
-  if (!op) throw new Error(`Unknown operator: ${plan.operator_id}`);
-  let total = emptyCost();
-  let cursor = { ...plan.current };
+/**
+ * 等级 from → to 的消耗。遍历 5 个精英段，取重叠区间累加。
+ * 不涉及精英阶段本身（那是单独项目）。
+ */
+const LEVEL_BANDS: { project: UpgradeProject; start: number; end: number }[] = [
+  { project: '精0等级', start: 1, end: 20 },
+  { project: '精1等级', start: 20, end: 40 },
+  { project: '精2等级', start: 40, end: 60 },
+  { project: '精3等级', start: 60, end: 80 },
+  { project: '精4等级', start: 80, end: 90 },
+];
 
-  while (cursor.ascension < plan.target.ascension) {
-    // 升到当前 ascension 的最大等级
-    const curve = getLevelCurve(op.rarity, cursor.ascension);
-    if (!curve) throw new Error(`No curve for rarity=${op.rarity} asc=${cursor.ascension}`);
-    const maxLevel = curve.levelCosts.length + 1;
-    total = addCost(total, computeLevelRangeCost(op.rarity, cursor.ascension, cursor.level, maxLevel, getLevelCurve));
-    // 突破
-    const ascCost = getAscensionCost(op.rarity, cursor.ascension + 1);
-    if (!ascCost) throw new Error(`No ascension cost for rarity=${op.rarity} stage=${cursor.ascension + 1}`);
-    total = addCost(total, { exp: 0, coin: ascCost.coin, materials: ascCost.materials });
-    cursor = { level: 1, ascension: cursor.ascension + 1 };
+export function calculateLevelMaterials(operator: OperatorName, from: number, to: number): CostMap {
+  if (from >= to) return { 折金票: 0 } as CostMap;
+  let acc: CostMap = { 折金票: 0 };
+  for (const band of LEVEL_BANDS) {
+    const lo = Math.max(from, band.start);
+    const hi = Math.min(to, band.end);
+    if (lo >= hi) continue;
+    const segment = calculateProjectMaterials(operator, band.project, lo, hi);
+    if (segment) acc = addCost(acc, segment);
   }
-
-  // 同一 ascension 内升到目标 level
-  total = addCost(total, computeLevelRangeCost(op.rarity, cursor.ascension, cursor.level, plan.target.level, getLevelCurve));
-  return total;
+  return acc;
 }
 
-export function computeWeaponCost(plan: WeaponPlan): CostMap {
-  const w = WEAPON_BY_ID[plan.weapon_id];
-  if (!w) throw new Error(`Unknown weapon: ${plan.weapon_id}`);
-  let total = emptyCost();
-  let cursor = { ...plan.current };
-
-  while (cursor.ascension < plan.target.ascension) {
-    const curve = getWeaponLevelCurve(w.rarity, cursor.ascension);
-    if (!curve) throw new Error(`No weapon curve for rarity=${w.rarity} asc=${cursor.ascension}`);
-    const maxLevel = curve.levelCosts.length + 1;
-    total = addCost(total, computeLevelRangeCost(w.rarity, cursor.ascension, cursor.level, maxLevel, getWeaponLevelCurve));
-    const ascCost = getWeaponAscensionCost(w.rarity, cursor.ascension + 1);
-    if (!ascCost) throw new Error(`No weapon ascension cost for rarity=${w.rarity} stage=${cursor.ascension + 1}`);
-    total = addCost(total, { exp: 0, coin: ascCost.coin, materials: ascCost.materials });
-    cursor = { level: 1, ascension: cursor.ascension + 1 };
+export function calculateWeaponLevelCost(from: number, to: number): CostMap {
+  if (from >= to) return {};
+  let acc: CostMap = {};
+  for (const stage of WEAPON_LEVEL_STAGES) {
+    if (stage.from >= from && stage.to <= to) {
+      acc = addCost(acc, { 武器经验值: stage.武器经验值, 折金票: stage.折金票 });
+    }
   }
+  return acc;
+}
 
-  total = addCost(total, computeLevelRangeCost(w.rarity, cursor.ascension, cursor.level, plan.target.level, getWeaponLevelCurve));
-  return total;
+export function calculateWeaponBreakCost(weaponName: WeaponName, stage: 1 | 2 | 3 | 4): CostMap {
+  if (stage <= 3) {
+    return { ...(WEAPON_BREAK_GENERAL as any)[stage] };
+  }
+  // stage 4: base + special
+  const special = WEAPON_BREAK_4_SPECIAL[weaponName] ?? {};
+  return addCost(WEAPON_BREAK_4_BASE as CostMap, special as CostMap);
 }
 ```
 
-- [ ] **Step 4: 运行测试**
+- [ ] **Step 8：跑测试**
 
 ```bash
-pnpm test -- planner
-# 预期：所有 planner 测试 PASS
+pnpm test -- cost-calc
+# 预期全部 PASS
 ```
 
-如果因为 Task 5 的数据和测试里的数字对不上，修正测试里的期望数字使其匹配真实数据。
+**若有测试失败**：通常是测试里的常量与真实数据不一致。**不要改实现去迁就测试**；先打开 `reference/zmdgraph/js/data.js` 核对真实值，然后改测试。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 9：提交**
 
 ```bash
 cd ..
 git add frontend/
-git commit -m "feat(logic): add planner cost calculation"
+git commit -m "feat(logic): cost calculation with DATABASE lookup and band aggregation"
 ```
 
 ---
 
-## Task 8：库存合并/扣减逻辑（纯函数 TDD）
+## Task 9：库存逻辑 + EXP 虚拟换算（TDD）
 
 **Files:**
 - Create: `frontend/src/logic/stock.ts`
 - Create: `frontend/src/logic/stock.test.ts`
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1：失败测试**
 
 ```ts
 // frontend/src/logic/stock.test.ts
 import { describe, expect, it } from 'vitest';
-import { mergeStock, diffStock, isPlanAffordable, type Stock } from './stock';
+import { mergeStock, diffStock, deductStock, isAffordable, computeVirtualExp, type Stock } from './stock';
 
 describe('mergeStock', () => {
-  it('adds counts when overwrite=false', () => {
-    const a: Stock = { mat_a: 5 };
-    const b: Stock = { mat_a: 3, mat_b: 10 };
-    expect(mergeStock(a, b, { mode: 'add' })).toEqual({ mat_a: 8, mat_b: 10 });
+  it('adds counts', () => {
+    const merged = mergeStock({ 折金票: 100 }, { 折金票: 50, 协议棱柱: 5 }, { mode: 'add' });
+    expect(merged).toEqual({ 折金票: 150, 协议棱柱: 5 });
   });
-
-  it('overwrites counts when mode=replace', () => {
-    const a: Stock = { mat_a: 5, mat_b: 2 };
-    const b: Stock = { mat_a: 3 };
-    expect(mergeStock(a, b, { mode: 'replace' })).toEqual({ mat_a: 3, mat_b: 2 });
+  it('replaces counts', () => {
+    expect(mergeStock({ 折金票: 100, 协议棱柱: 3 }, { 折金票: 50 }, { mode: 'replace' }))
+      .toEqual({ 折金票: 50, 协议棱柱: 3 });
   });
 });
 
 describe('diffStock', () => {
-  it('returns missing materials when stock insufficient', () => {
-    const have: Stock = { mat_a: 2 };
-    const need: Stock = { mat_a: 5, mat_b: 3 };
-    expect(diffStock(have, need)).toEqual({ mat_a: 3, mat_b: 3 });
+  it('returns missing amounts', () => {
+    expect(diffStock({ 折金票: 100 }, { 折金票: 150, 协议棱柱: 3 }))
+      .toEqual({ 折金票: 50, 协议棱柱: 3 });
   });
-
-  it('returns empty when stock covers need', () => {
-    const have: Stock = { mat_a: 10, mat_b: 5 };
-    const need: Stock = { mat_a: 5, mat_b: 3 };
-    expect(diffStock(have, need)).toEqual({});
+  it('returns empty when fully covered', () => {
+    expect(diffStock({ 折金票: 200 }, { 折金票: 150 })).toEqual({});
   });
 });
 
-describe('isPlanAffordable', () => {
-  it('true when diff is empty', () => {
-    expect(isPlanAffordable({ mat_a: 5 }, { mat_a: 3 })).toBe(true);
+describe('isAffordable', () => {
+  it('true when diff empty', () => {
+    expect(isAffordable({ 折金票: 100 }, { 折金票: 50 })).toBe(true);
   });
-  it('false when any material short', () => {
-    expect(isPlanAffordable({ mat_a: 5 }, { mat_a: 10 })).toBe(false);
+  it('false otherwise', () => {
+    expect(isAffordable({ 折金票: 50 }, { 折金票: 100 })).toBe(false);
+  });
+});
+
+describe('deductStock', () => {
+  it('subtracts and clamps at zero', () => {
+    expect(deductStock({ 折金票: 100, 协议棱柱: 5 }, { 折金票: 30, 协议棱柱: 5 }))
+      .toEqual({ 折金票: 70 });
+  });
+});
+
+describe('computeVirtualExp', () => {
+  it('sums EXP cards to record EXP', () => {
+    const stock: Stock = { 高级作战记录: 2, 中级作战记录: 3 };
+    expect(computeVirtualExp(stock, 'record')).toBe(2 * 10000 + 3 * 1000);
+  });
+  it('returns 0 when no relevant cards', () => {
+    expect(computeVirtualExp({ 折金票: 100 }, 'record')).toBe(0);
   });
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 2：跑确认失败 → 实现**
 
 ```bash
 cd frontend && pnpm test -- stock
-# 预期：FAIL
+# FAIL
 ```
-
-- [ ] **Step 3: 实现**
 
 ```ts
 // frontend/src/logic/stock.ts
-import type { MaterialId } from '@/data/types';
+import type { MaterialName } from '@/data/materials';
+import { sumExpCards } from './exp-conversion';
+import type { ExpType } from '@/data/materials';
 
-export type Stock = Record<MaterialId, number>;
+export type Stock = Partial<Record<MaterialName, number>>;
 
 export type MergeMode = 'add' | 'replace';
 
 export function mergeStock(base: Stock, patch: Stock, opts: { mode: MergeMode }): Stock {
   const out: Stock = { ...base };
-  for (const [id, count] of Object.entries(patch)) {
+  for (const [k, v] of Object.entries(patch)) {
+    if (typeof v !== 'number') continue;
     if (opts.mode === 'add') {
-      out[id] = (out[id] ?? 0) + count;
+      out[k as MaterialName] = (out[k as MaterialName] ?? 0) + v;
     } else {
-      out[id] = count;
+      out[k as MaterialName] = v;
     }
   }
   return out;
 }
 
-/** Returns a Stock whose entries are what's still missing (need − have, floored at 0, zero entries omitted). */
 export function diffStock(have: Stock, need: Stock): Stock {
   const out: Stock = {};
-  for (const [id, count] of Object.entries(need)) {
-    const missing = count - (have[id] ?? 0);
-    if (missing > 0) out[id] = missing;
+  for (const [k, v] of Object.entries(need)) {
+    if (typeof v !== 'number') continue;
+    const missing = v - (have[k as MaterialName] ?? 0);
+    if (missing > 0) out[k as MaterialName] = missing;
   }
   return out;
 }
 
-export function isPlanAffordable(have: Stock, need: Stock): boolean {
+export function isAffordable(have: Stock, need: Stock): boolean {
   return Object.keys(diffStock(have, need)).length === 0;
 }
 
-/** Deducts `spent` from `have`, clamping at 0 and dropping zero entries. */
 export function deductStock(have: Stock, spent: Stock): Stock {
   const out: Stock = {};
-  for (const [id, count] of Object.entries(have)) {
-    const remain = count - (spent[id] ?? 0);
-    if (remain > 0) out[id] = remain;
+  for (const [k, v] of Object.entries(have)) {
+    if (typeof v !== 'number') continue;
+    const remain = v - (spent[k as MaterialName] ?? 0);
+    if (remain > 0) out[k as MaterialName] = remain;
   }
-  // 保留 spent 里没出现在 have 的记录为 0（忽略）
   return out;
+}
+
+export function computeVirtualExp(stock: Stock, type: ExpType): number {
+  return sumExpCards(stock, type);
 }
 ```
 
-- [ ] **Step 4: 运行测试**
+- [ ] **Step 3：跑通过 + 提交**
 
 ```bash
 pnpm test -- stock
-# 预期：PASS
-```
-
-- [ ] **Step 5: 提交**
-
-```bash
 cd ..
 git add frontend/
-git commit -m "feat(logic): add stock merge/diff/deduct"
+git commit -m "feat(logic): stock merge/diff/deduct + virtual EXP computation"
 ```
 
 ---
 
-## Task 9：全局 store（Zustand + localStorage）
+## Task 10：Zustand store
 
 **Files:**
 - Create: `frontend/src/store/app-store.ts`
 - Create: `frontend/src/store/app-store.test.ts`
 
-- [ ] **Step 1: 装 Zustand**
+`planRows` 按上游设计：**运行时即每次 state 变化就重算每行的 materials**。存储时可以存 materials（跟上游一致），也可以不存（重算）。保守起见存进去（和上游行为一致 + 支持离线查看）。
+
+- [ ] **Step 1：装 zustand**
 
 ```bash
-cd frontend
-pnpm add zustand
+cd frontend && pnpm add zustand
 ```
 
-- [ ] **Step 2: 写失败测试**
+- [ ] **Step 2：失败测试**
 
 ```ts
 // frontend/src/store/app-store.test.ts
@@ -1182,125 +1081,125 @@ describe('app store', () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it('adds to stock by material id', () => {
-    useAppStore.getState().addStock('mat_a', 5);
-    expect(useAppStore.getState().stock['mat_a']).toBe(5);
-    useAppStore.getState().addStock('mat_a', 3);
-    expect(useAppStore.getState().stock['mat_a']).toBe(8);
+  it('initial state is empty', () => {
+    const s = useAppStore.getState();
+    expect(s.stock).toEqual({});
+    expect(s.ownedOperators).toEqual({});
+    expect(s.ownedWeapons).toEqual({});
+    expect(s.planRows).toEqual([]);
+    expect(s.settings.darkMode).toBe(false);
   });
 
-  it('sets stock directly (replace)', () => {
-    useAppStore.getState().setStockQuantity('mat_a', 10);
-    expect(useAppStore.getState().stock['mat_a']).toBe(10);
+  it('sets stock by material name', () => {
+    useAppStore.getState().setStock('折金票', 100);
+    expect(useAppStore.getState().stock['折金票']).toBe(100);
+  });
+
+  it('sets owned operator status (multi-field)', () => {
+    useAppStore.getState().setOwnedOperator('洛茜', {
+      精英阶段: 2, 等级: 45, 装备适配: 1, 天赋: 2, 基建: 1, 信赖: 2,
+      技能1: 7, 技能2: 7, 技能3: 5, 技能4: 7,
+    });
+    expect(useAppStore.getState().ownedOperators['洛茜']?.等级).toBe(45);
+  });
+
+  it('adds plan row and removes by id', () => {
+    useAppStore.getState().addPlanRow({
+      id: 'p1', 干员: '洛茜', 项目: '精英阶段', 现等级: 0, 目标等级: 1,
+      materials: { 折金票: 1600 }, hidden: false,
+    });
+    expect(useAppStore.getState().planRows).toHaveLength(1);
+    useAppStore.getState().removePlanRow('p1');
+    expect(useAppStore.getState().planRows).toHaveLength(0);
   });
 
   it('toggles dark mode', () => {
-    const initial = useAppStore.getState().settings.darkMode;
+    const before = useAppStore.getState().settings.darkMode;
     useAppStore.getState().toggleDarkMode();
-    expect(useAppStore.getState().settings.darkMode).toBe(!initial);
+    expect(useAppStore.getState().settings.darkMode).toBe(!before);
   });
 
-  it('adds owned operator', () => {
-    useAppStore.getState().setOwnedOperator('angelina', { level: 30, ascension: 1 });
-    expect(useAppStore.getState().ownedOperators['angelina']).toEqual({ level: 30, ascension: 1 });
-  });
-
-  it('adds operator plan', () => {
-    const plan = {
-      operator_id: 'angelina',
-      current: { level: 30, ascension: 1 },
-      target: { level: 60, ascension: 2 },
-    };
-    useAppStore.getState().upsertOperatorPlan(plan);
-    expect(useAppStore.getState().operatorPlans).toHaveLength(1);
-    expect(useAppStore.getState().operatorPlans[0].target.level).toBe(60);
-  });
-
-  it('exports and imports state', () => {
-    useAppStore.getState().addStock('mat_a', 5);
-    const snapshot = useAppStore.getState().exportSnapshot();
+  it('exports and imports snapshot', () => {
+    useAppStore.getState().setStock('折金票', 100);
+    const json = useAppStore.getState().exportSnapshot();
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.getState().importSnapshot(snapshot);
-    expect(useAppStore.getState().stock['mat_a']).toBe(5);
+    useAppStore.getState().importSnapshot(json);
+    expect(useAppStore.getState().stock['折金票']).toBe(100);
   });
 });
 ```
 
-- [ ] **Step 3: 运行确认失败**
-
-```bash
-pnpm test -- app-store
-# FAIL
-```
-
-- [ ] **Step 4: 实现 store**
+- [ ] **Step 3：实现 `app-store.ts`**
 
 ```ts
 // frontend/src/store/app-store.ts
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Stock } from '@/logic/stock';
-import type { OperatorPlan, WeaponPlan } from '@/logic/planner';
+import type { MaterialName } from '@/data/materials';
+import type { UpgradeProject, CostMap } from '@/data/types';
 
-interface OwnedOperator {
-  level: number;
-  ascension: number;
+export interface OperatorState {
+  精英阶段: number; // 0-4
+  等级: number;     // 1-90
+  装备适配: number; // 0-3
+  天赋: number;     // 0-4
+  基建: number;     // 0-4
+  信赖: number;     // 0-4
+  技能1: number;    // 1-12
+  技能2: number;
+  技能3: number;
+  技能4: number;
 }
 
-interface OwnedWeapon {
-  level: number;
-  ascension: number;
+export interface WeaponState {
+  破限阶段: number; // 0-4
+  等级: number;     // 1-90
 }
 
-interface Settings {
-  darkMode: boolean;
+export interface PlanRow {
+  id: string;
+  干员: string;             // operator or weapon name
+  项目: UpgradeProject | '等级' | '破限';
+  现等级: number;
+  目标等级: number;
+  materials: CostMap;
+  hidden: boolean;
 }
+
+interface Settings { darkMode: boolean }
 
 interface AppState {
   stock: Stock;
-  ownedOperators: Record<string, OwnedOperator>;
-  ownedWeapons: Record<string, OwnedWeapon>;
-  operatorPlans: OperatorPlan[];
-  weaponPlans: WeaponPlan[];
+  ownedOperators: Record<string, OperatorState>;
+  ownedWeapons: Record<string, WeaponState>;
+  planRows: PlanRow[];
   settings: Settings;
 
-  // Stock
-  addStock: (materialId: string, count: number) => void;
-  setStockQuantity: (materialId: string, count: number) => void;
-  removeStock: (materialId: string) => void;
-  replaceStock: (newStock: Stock) => void;
+  setStock: (name: MaterialName, count: number) => void;
+  replaceStock: (s: Stock) => void;
 
-  // Operators
-  setOwnedOperator: (id: string, data: OwnedOperator) => void;
-  removeOwnedOperator: (id: string) => void;
-  upsertOperatorPlan: (plan: OperatorPlan) => void;
-  removeOperatorPlan: (operatorId: string) => void;
+  setOwnedOperator: (name: string, state: OperatorState) => void;
+  removeOwnedOperator: (name: string) => void;
 
-  // Weapons
-  setOwnedWeapon: (id: string, data: OwnedWeapon) => void;
-  removeOwnedWeapon: (id: string) => void;
-  upsertWeaponPlan: (plan: WeaponPlan) => void;
-  removeWeaponPlan: (weaponId: string) => void;
+  setOwnedWeapon: (name: string, state: WeaponState) => void;
+  removeOwnedWeapon: (name: string) => void;
 
-  // Settings
+  addPlanRow: (row: PlanRow) => void;
+  updatePlanRow: (id: string, patch: Partial<PlanRow>) => void;
+  removePlanRow: (id: string) => void;
+
   toggleDarkMode: () => void;
 
-  // Import/Export
   exportSnapshot: () => string;
   importSnapshot: (json: string) => void;
 }
 
-const INITIAL: Omit<AppState,
-  | 'addStock' | 'setStockQuantity' | 'removeStock' | 'replaceStock'
-  | 'setOwnedOperator' | 'removeOwnedOperator' | 'upsertOperatorPlan' | 'removeOperatorPlan'
-  | 'setOwnedWeapon' | 'removeOwnedWeapon' | 'upsertWeaponPlan' | 'removeWeaponPlan'
-  | 'toggleDarkMode' | 'exportSnapshot' | 'importSnapshot'
-> = {
+const INITIAL: Pick<AppState, 'stock' | 'ownedOperators' | 'ownedWeapons' | 'planRows' | 'settings'> = {
   stock: {},
   ownedOperators: {},
   ownedWeapons: {},
-  operatorPlans: [],
-  weaponPlans: [],
+  planRows: [],
   settings: { darkMode: false },
 };
 
@@ -1309,96 +1208,66 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       ...INITIAL,
 
-      addStock: (id, count) =>
-        set((s) => ({ stock: { ...s.stock, [id]: (s.stock[id] ?? 0) + count } })),
-      setStockQuantity: (id, count) =>
-        set((s) => ({ stock: { ...s.stock, [id]: count } })),
-      removeStock: (id) =>
-        set((s) => {
-          const { [id]: _, ...rest } = s.stock;
-          return { stock: rest };
-        }),
+      setStock: (name, count) => set((s) => ({ stock: { ...s.stock, [name]: count } })),
       replaceStock: (newStock) => set({ stock: newStock }),
 
-      setOwnedOperator: (id, data) =>
-        set((s) => ({ ownedOperators: { ...s.ownedOperators, [id]: data } })),
-      removeOwnedOperator: (id) =>
-        set((s) => {
-          const { [id]: _, ...rest } = s.ownedOperators;
-          return { ownedOperators: rest };
-        }),
-      upsertOperatorPlan: (plan) =>
-        set((s) => {
-          const others = s.operatorPlans.filter((p) => p.operator_id !== plan.operator_id);
-          return { operatorPlans: [...others, plan] };
-        }),
-      removeOperatorPlan: (operatorId) =>
-        set((s) => ({ operatorPlans: s.operatorPlans.filter((p) => p.operator_id !== operatorId) })),
+      setOwnedOperator: (name, state) => set((s) => ({ ownedOperators: { ...s.ownedOperators, [name]: state } })),
+      removeOwnedOperator: (name) => set((s) => {
+        const { [name]: _, ...rest } = s.ownedOperators; return { ownedOperators: rest };
+      }),
 
-      setOwnedWeapon: (id, data) =>
-        set((s) => ({ ownedWeapons: { ...s.ownedWeapons, [id]: data } })),
-      removeOwnedWeapon: (id) =>
-        set((s) => {
-          const { [id]: _, ...rest } = s.ownedWeapons;
-          return { ownedWeapons: rest };
-        }),
-      upsertWeaponPlan: (plan) =>
-        set((s) => {
-          const others = s.weaponPlans.filter((p) => p.weapon_id !== plan.weapon_id);
-          return { weaponPlans: [...others, plan] };
-        }),
-      removeWeaponPlan: (weaponId) =>
-        set((s) => ({ weaponPlans: s.weaponPlans.filter((p) => p.weapon_id !== weaponId) })),
+      setOwnedWeapon: (name, state) => set((s) => ({ ownedWeapons: { ...s.ownedWeapons, [name]: state } })),
+      removeOwnedWeapon: (name) => set((s) => {
+        const { [name]: _, ...rest } = s.ownedWeapons; return { ownedWeapons: rest };
+      }),
 
-      toggleDarkMode: () =>
-        set((s) => ({ settings: { ...s.settings, darkMode: !s.settings.darkMode } })),
+      addPlanRow: (row) => set((s) => ({ planRows: [...s.planRows, row] })),
+      updatePlanRow: (id, patch) => set((s) => ({
+        planRows: s.planRows.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+      })),
+      removePlanRow: (id) => set((s) => ({ planRows: s.planRows.filter((r) => r.id !== id) })),
 
-      exportSnapshot: () => {
-        const { stock, ownedOperators, ownedWeapons, operatorPlans, weaponPlans, settings } = get();
-        return JSON.stringify(
-          { stock, ownedOperators, ownedWeapons, operatorPlans, weaponPlans, settings },
-          null,
-          2,
-        );
-      },
+      toggleDarkMode: () => set((s) => ({ settings: { ...s.settings, darkMode: !s.settings.darkMode } })),
+
+      exportSnapshot: () => JSON.stringify(
+        {
+          stock: get().stock,
+          ownedOperators: get().ownedOperators,
+          ownedWeapons: get().ownedWeapons,
+          planRows: get().planRows,
+          settings: get().settings,
+        },
+        null,
+        2,
+      ),
       importSnapshot: (json) => {
         const parsed = JSON.parse(json);
         set({
           stock: parsed.stock ?? {},
           ownedOperators: parsed.ownedOperators ?? {},
           ownedWeapons: parsed.ownedWeapons ?? {},
-          operatorPlans: parsed.operatorPlans ?? [],
-          weaponPlans: parsed.weaponPlans ?? [],
+          planRows: parsed.planRows ?? [],
           settings: parsed.settings ?? { darkMode: false },
         });
       },
     }),
-    {
-      name: 'zmd-planner-state',
-      version: 1,
-    },
+    { name: 'zmd-planner-state', version: 1 },
   ),
 );
 ```
 
-- [ ] **Step 5: 运行测试**
+- [ ] **Step 4：跑测试通过 + 提交**
 
 ```bash
 pnpm test -- app-store
-# PASS
-```
-
-- [ ] **Step 6: 提交**
-
-```bash
 cd ..
 git add frontend/
-git commit -m "feat(store): add zustand store with localStorage persist"
+git commit -m "feat(store): zustand store with stock/owned/plans/settings + persist"
 ```
 
 ---
 
-## Task 10：App 外壳、路由、导航栏
+## Task 11：App 外壳 + 路由 + 导航栏
 
 **Files:**
 - Modify: `frontend/src/App.tsx`
@@ -1406,27 +1275,33 @@ git commit -m "feat(store): add zustand store with localStorage persist"
 - Create: `frontend/src/components/layout/Nav.tsx`
 - Create: `frontend/src/pages/HomePage.tsx`, `StockPage.tsx`, `OperatorsPage.tsx`, `WeaponsPage.tsx`, `PlannerPage.tsx`, `SettingsPage.tsx`（占位）
 
-- [ ] **Step 1: 装 React Router**
+（与 v1 相同。）
+
+- [ ] **Step 1：装 React Router**
 
 ```bash
-cd frontend
-pnpm add react-router-dom
+cd frontend && pnpm add react-router-dom
 ```
 
-- [ ] **Step 2: 写各页面占位**
+- [ ] **Step 2：写 6 个占位页**
 
-每个文件一行 JSX，例如：
+例：
 
 ```tsx
 // frontend/src/pages/HomePage.tsx
 export default function HomePage() {
-  return <div className="p-6"><h2 className="text-xl font-semibold">首页</h2><p className="text-muted-foreground mt-2">从左侧导航进入各模块。</p></div>;
+  return (
+    <div className="p-6">
+      <h2 className="text-xl font-semibold">首页</h2>
+      <p className="text-muted-foreground mt-2">从左侧导航进入各模块。</p>
+    </div>
+  );
 }
 ```
 
-照此模式创建：`StockPage.tsx`（标题"库存"）、`OperatorsPage.tsx`（"干员"）、`WeaponsPage.tsx`（"武器"）、`PlannerPage.tsx`（"规划"）、`SettingsPage.tsx`（"设置"）。
+照此建：`StockPage`、`OperatorsPage`、`WeaponsPage`、`PlannerPage`、`SettingsPage`。
 
-- [ ] **Step 3: 写 `Nav.tsx`**
+- [ ] **Step 3：写 `Nav.tsx`**
 
 ```tsx
 // frontend/src/components/layout/Nav.tsx
@@ -1452,10 +1327,7 @@ export function Nav() {
           to={l.to}
           end={l.to === '/'}
           className={({ isActive }) =>
-            cn(
-              'px-3 py-2 rounded-md text-sm hover:bg-accent',
-              isActive && 'bg-accent font-medium',
-            )
+            cn('px-3 py-2 rounded-md text-sm hover:bg-accent', isActive && 'bg-accent font-medium')
           }
         >
           {l.label}
@@ -1466,13 +1338,13 @@ export function Nav() {
 }
 ```
 
-- [ ] **Step 4: 写 `AppShell.tsx`**
+- [ ] **Step 4：写 `AppShell.tsx`**
 
 ```tsx
 // frontend/src/components/layout/AppShell.tsx
 import { Outlet } from 'react-router-dom';
-import { Nav } from './Nav';
 import { useEffect } from 'react';
+import { Nav } from './Nav';
 import { useAppStore } from '@/store/app-store';
 
 export function AppShell() {
@@ -1492,7 +1364,7 @@ export function AppShell() {
 }
 ```
 
-- [ ] **Step 5: 替换 `App.tsx` 为路由根**
+- [ ] **Step 5：替换 `App.tsx` 为路由根**
 
 ```tsx
 // frontend/src/App.tsx
@@ -1525,79 +1397,72 @@ function App() {
 export default App;
 ```
 
-- [ ] **Step 6: 人工验证**
+- [ ] **Step 6：人工验证 + 提交**
 
 ```bash
-pnpm dev
-# 访问 http://localhost:5173，点每个菜单项能进入对应占位页
-# Ctrl+C
-```
-
-- [ ] **Step 7: 提交**
-
-```bash
+pnpm dev # 访问每个页面确认能进
 cd ..
 git add frontend/
-git commit -m "feat(frontend): add routing and app shell"
+git commit -m "feat(frontend): routing and app shell with 6 pages"
 ```
 
 ---
 
-## Task 11：库存页（Stock）
+## Task 12：库存页（35 个材料卡片 + EXP 虚拟计算）
 
 **Files:**
 - Rewrite: `frontend/src/pages/StockPage.tsx`
-- Create: `frontend/src/components/stock/StockTable.tsx`
+- Create: `frontend/src/components/stock/StockGrid.tsx`
 
-- [ ] **Step 1: 实现 `StockTable.tsx`**
+- [ ] **Step 1：实现 `StockGrid.tsx`**
 
 ```tsx
-// frontend/src/components/stock/StockTable.tsx
-import { MATERIALS } from '@/data/materials';
-import { useAppStore } from '@/store/app-store';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
+// frontend/src/components/stock/StockGrid.tsx
 import { useState } from 'react';
+import { MATERIAL_COLUMNS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
+import { useAppStore } from '@/store/app-store';
+import { computeVirtualExp } from '@/logic/stock';
+import { Input } from '@/components/ui/input';
 
-export function StockTable() {
+const EXP_TYPE_FOR_VIRTUAL: Record<string, 'record' | 'cognition' | 'weapon'> = {
+  '作战记录经验值': 'record',
+  '认知载体经验值': 'cognition',
+  '武器经验值': 'weapon',
+};
+
+export function StockGrid() {
   const stock = useAppStore((s) => s.stock);
-  const setStockQuantity = useAppStore((s) => s.setStockQuantity);
-  const removeStock = useAppStore((s) => s.removeStock);
+  const setStock = useAppStore((s) => s.setStock);
   const [filter, setFilter] = useState('');
 
-  const rows = MATERIALS.filter((m) =>
-    filter ? m.name.includes(filter) || m.id.includes(filter.toLowerCase()) : true,
-  );
+  const rows = MATERIAL_COLUMNS.filter((n) => (filter ? n.includes(filter) : true));
 
   return (
     <div className="space-y-3">
-      <Input
-        placeholder="搜索材料..."
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        className="max-w-xs"
-      />
-      <div className="border rounded-md divide-y">
-        {rows.map((m) => {
-          const current = stock[m.id] ?? 0;
-          return (
-            <div key={m.id} className="flex items-center gap-4 p-3">
-              <div className="flex-1">
-                <div className="font-medium">{m.name}</div>
-                <div className="text-xs text-muted-foreground">{m.id} · 稀有度 {m.tier}</div>
+      <Input placeholder="搜索材料..." value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-xs" />
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {rows.map((name) => {
+          if (VIRTUAL_EXP_MATERIALS.has(name)) {
+            const val = computeVirtualExp(stock, EXP_TYPE_FOR_VIRTUAL[name]);
+            return (
+              <div key={name} className="border rounded-md p-3 bg-muted/30">
+                <div className="text-sm font-medium">{name}</div>
+                <div className="text-xs text-muted-foreground mt-1">计算值</div>
+                <div className="text-lg font-mono mt-1">{val.toLocaleString()}</div>
               </div>
+            );
+          }
+          const current = stock[name as MaterialName] ?? 0;
+          return (
+            <div key={name} className="border rounded-md p-3">
+              <div className="text-sm font-medium">{name}</div>
               <Input
                 type="number"
                 min={0}
                 value={current}
-                onChange={(e) => setStockQuantity(m.id, Math.max(0, Number(e.target.value) || 0))}
-                className="w-28"
+                onChange={(e) => setStock(name as MaterialName, Math.max(0, Number(e.target.value) || 0))}
+                className="mt-2"
               />
-              {current > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => removeStock(m.id)}>
-                  清零
-                </Button>
-              )}
             </div>
           );
         })}
@@ -1607,49 +1472,42 @@ export function StockTable() {
 }
 ```
 
-- [ ] **Step 2: 改 `StockPage.tsx`**
+- [ ] **Step 2：替换 `StockPage.tsx`**
 
 ```tsx
 // frontend/src/pages/StockPage.tsx
-import { StockTable } from '@/components/stock/StockTable';
+import { StockGrid } from '@/components/stock/StockGrid';
 
 export default function StockPage() {
   return (
     <div className="p-6 space-y-4">
       <h2 className="text-2xl font-semibold">库存</h2>
-      <p className="text-sm text-muted-foreground">手动输入每种材料的持有数量，数据自动保存在浏览器本地。</p>
-      <StockTable />
+      <p className="text-sm text-muted-foreground">输入持有量。EXP 项为计算值，由对应卡片数量自动求出。</p>
+      <StockGrid />
     </div>
   );
 }
 ```
 
-- [ ] **Step 3: 人工验证**
+- [ ] **Step 3：验证 + 提交**
 
 ```bash
-cd frontend && pnpm dev
-# 访问 /stock，输入数字，刷新页面数据应该还在（localStorage）
-# Ctrl+C
-```
-
-- [ ] **Step 4: 提交**
-
-```bash
+cd frontend && pnpm dev # 访问 /stock 测试
 cd ..
 git add frontend/
-git commit -m "feat(stock): stock page with per-material input"
+git commit -m "feat(stock): 35-material grid with virtual EXP display"
 ```
 
 ---
 
-## Task 12：干员页（Operators）
+## Task 13：干员页
 
 **Files:**
 - Rewrite: `frontend/src/pages/OperatorsPage.tsx`
-- Create: `frontend/src/components/operators/OperatorList.tsx`
+- Create: `frontend/src/components/operators/OperatorGrid.tsx`
 - Create: `frontend/src/components/operators/OperatorEditDialog.tsx`
 
-- [ ] **Step 1: 实现 `OperatorEditDialog.tsx`**
+- [ ] **Step 1：`OperatorEditDialog.tsx`**
 
 ```tsx
 // frontend/src/components/operators/OperatorEditDialog.tsx
@@ -1657,48 +1515,62 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useState, useEffect } from 'react';
-import type { Operator } from '@/data/types';
+import { useEffect, useState } from 'react';
+import type { OperatorState } from '@/store/app-store';
 
-interface OperatorEditDialogProps {
-  operator: Operator | null;
+const DEFAULT_STATE: OperatorState = {
+  精英阶段: 0, 等级: 1, 装备适配: 0, 天赋: 0, 基建: 0, 信赖: 0,
+  技能1: 1, 技能2: 1, 技能3: 1, 技能4: 1,
+};
+
+const FIELDS: { key: keyof OperatorState; label: string; min: number; max: number }[] = [
+  { key: '精英阶段', label: '精英阶段', min: 0, max: 4 },
+  { key: '等级', label: '等级', min: 1, max: 90 },
+  { key: '装备适配', label: '装备适配', min: 0, max: 3 },
+  { key: '天赋', label: '天赋', min: 0, max: 4 },
+  { key: '基建', label: '基建', min: 0, max: 4 },
+  { key: '信赖', label: '信赖', min: 0, max: 4 },
+  { key: '技能1', label: '技能1', min: 1, max: 12 },
+  { key: '技能2', label: '技能2', min: 1, max: 12 },
+  { key: '技能3', label: '技能3', min: 1, max: 12 },
+  { key: '技能4', label: '技能4', min: 1, max: 12 },
+];
+
+export function OperatorEditDialog({
+  operatorName, open, onOpenChange, initial, onSave, onRemove,
+}: {
+  operatorName: string | null;
   open: boolean;
-  onOpenChange: (open: boolean) => void;
-  initial?: { level: number; ascension: number };
-  onSave: (level: number, ascension: number) => void;
+  onOpenChange: (o: boolean) => void;
+  initial?: OperatorState;
+  onSave: (state: OperatorState) => void;
   onRemove?: () => void;
-}
-
-export function OperatorEditDialog({ operator, open, onOpenChange, initial, onSave, onRemove }: OperatorEditDialogProps) {
-  const [level, setLevel] = useState(initial?.level ?? 1);
-  const [ascension, setAscension] = useState(initial?.ascension ?? 0);
-
-  useEffect(() => {
-    setLevel(initial?.level ?? 1);
-    setAscension(initial?.ascension ?? 0);
-  }, [initial, open]);
-
-  if (!operator) return null;
-
+}) {
+  const [state, setState] = useState<OperatorState>(initial ?? DEFAULT_STATE);
+  useEffect(() => { setState(initial ?? DEFAULT_STATE); }, [initial, open]);
+  if (!operatorName) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{operator.name}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label>当前等级</Label>
-            <Input type="number" min={1} value={level} onChange={(e) => setLevel(Math.max(1, Number(e.target.value) || 1))} />
-          </div>
-          <div>
-            <Label>当前突破</Label>
-            <Input type="number" min={0} max={operator.maxAscension} value={ascension} onChange={(e) => setAscension(Math.max(0, Math.min(operator.maxAscension, Number(e.target.value) || 0)))} />
-          </div>
+      <DialogContent className="max-w-xl">
+        <DialogHeader><DialogTitle>{operatorName}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          {FIELDS.map((f) => (
+            <div key={f.key}>
+              <Label className="text-xs">{f.label}</Label>
+              <Input
+                type="number" min={f.min} max={f.max}
+                value={state[f.key]}
+                onChange={(e) => {
+                  const v = Math.max(f.min, Math.min(f.max, Number(e.target.value) || f.min));
+                  setState((s) => ({ ...s, [f.key]: v }));
+                }}
+              />
+            </div>
+          ))}
         </div>
         <DialogFooter className="gap-2">
           {onRemove && <Button variant="destructive" onClick={onRemove}>移除</Button>}
-          <Button onClick={() => onSave(level, ascension)}>保存</Button>
+          <Button onClick={() => onSave(state)}>保存</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1706,433 +1578,580 @@ export function OperatorEditDialog({ operator, open, onOpenChange, initial, onSa
 }
 ```
 
-- [ ] **Step 2: 实现 `OperatorList.tsx`**
+- [ ] **Step 2：`OperatorGrid.tsx`**
 
 ```tsx
-// frontend/src/components/operators/OperatorList.tsx
+// frontend/src/components/operators/OperatorGrid.tsx
 import { useState } from 'react';
-import { OPERATORS } from '@/data/operators';
+import { CHARACTER_LIST } from '@/data/operators';
 import { useAppStore } from '@/store/app-store';
 import { OperatorEditDialog } from './OperatorEditDialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import type { Operator } from '@/data/types';
 
-export function OperatorList() {
+export function OperatorGrid() {
   const owned = useAppStore((s) => s.ownedOperators);
-  const setOwnedOperator = useAppStore((s) => s.setOwnedOperator);
-  const removeOwnedOperator = useAppStore((s) => s.removeOwnedOperator);
-
+  const setOwned = useAppStore((s) => s.setOwnedOperator);
+  const removeOwned = useAppStore((s) => s.removeOwnedOperator);
   const [filter, setFilter] = useState('');
-  const [editing, setEditing] = useState<Operator | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
-  const rows = OPERATORS.filter((o) => (filter ? o.name.includes(filter) || o.id.includes(filter.toLowerCase()) : true));
+  const names = CHARACTER_LIST.filter((n) => (filter ? n.includes(filter) : true));
 
   return (
     <div className="space-y-3">
       <Input placeholder="搜索干员..." value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-xs" />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {rows.map((o) => {
-          const has = owned[o.id];
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {names.map((n) => {
+          const has = owned[n];
           return (
-            <div key={o.id} className={`border rounded-md p-3 flex items-center justify-between ${has ? 'bg-accent/40' : ''}`}>
+            <div key={n} className={`border rounded-md p-3 flex items-center justify-between ${has ? 'bg-accent/40' : ''}`}>
               <div>
-                <div className="font-medium">{o.name}</div>
+                <div className="font-medium">{n}</div>
                 <div className="text-xs text-muted-foreground">
-                  {o.rarity}★ · {has ? `Lv.${has.level} 突破${has.ascension}` : '未持有'}
+                  {has ? `精${has.精英阶段} Lv.${has.等级} 装${has.装备适配} 天${has.天赋} 建${has.基建} 信${has.信赖}` : '未持有'}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setEditing(o)}>
-                {has ? '编辑' : '添加'}
-              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEditing(n)}>{has ? '编辑' : '添加'}</Button>
             </div>
           );
         })}
       </div>
 
       <OperatorEditDialog
-        operator={editing}
+        operatorName={editing}
         open={!!editing}
         onOpenChange={(o) => !o && setEditing(null)}
-        initial={editing ? owned[editing.id] : undefined}
-        onSave={(level, ascension) => {
-          if (editing) {
-            setOwnedOperator(editing.id, { level, ascension });
-            setEditing(null);
-          }
-        }}
-        onRemove={editing && owned[editing.id] ? () => {
-          removeOwnedOperator(editing.id);
-          setEditing(null);
-        } : undefined}
+        initial={editing ? owned[editing] : undefined}
+        onSave={(state) => { if (editing) { setOwned(editing, state); setEditing(null); } }}
+        onRemove={editing && owned[editing] ? () => { removeOwned(editing); setEditing(null); } : undefined}
       />
     </div>
   );
 }
 ```
 
-- [ ] **Step 3: 改 `OperatorsPage.tsx`**
+- [ ] **Step 3：改 `OperatorsPage.tsx`**
 
 ```tsx
-// frontend/src/pages/OperatorsPage.tsx
-import { OperatorList } from '@/components/operators/OperatorList';
+import { OperatorGrid } from '@/components/operators/OperatorGrid';
 
 export default function OperatorsPage() {
   return (
     <div className="p-6 space-y-4">
       <h2 className="text-2xl font-semibold">干员</h2>
-      <p className="text-sm text-muted-foreground">标记你已持有的干员及当前等级/突破。</p>
-      <OperatorList />
+      <p className="text-sm text-muted-foreground">记录你持有的每个干员的当前状态（10 个维度）。</p>
+      <OperatorGrid />
     </div>
   );
 }
 ```
 
-- [ ] **Step 4: 验证**
+- [ ] **Step 4：验证 + 提交**
 
 ```bash
-cd frontend && pnpm dev
-# 访问 /operators，搜索、添加、编辑、移除应该都能用
-# Ctrl+C
-```
-
-- [ ] **Step 5: 提交**
-
-```bash
+cd frontend && pnpm dev # 测试 /operators
 cd ..
 git add frontend/
-git commit -m "feat(operators): operator list with edit dialog"
+git commit -m "feat(operators): operator grid with 10-dimension edit dialog"
 ```
 
 ---
 
-## Task 13：武器页（Weapons）
+## Task 14：武器页
 
 **Files:**
 - Rewrite: `frontend/src/pages/WeaponsPage.tsx`
-- Create: `frontend/src/components/weapons/WeaponList.tsx`
+- Create: `frontend/src/components/weapons/WeaponGrid.tsx`
 - Create: `frontend/src/components/weapons/WeaponEditDialog.tsx`
 
-结构复制 Task 12 的 pattern，把 `Operator` / `OPERATORS` / `ownedOperators` / `setOwnedOperator` / `removeOwnedOperator` 换成 `Weapon` / `WEAPONS` / `ownedWeapons` / `setOwnedWeapon` / `removeOwnedWeapon`。
+`WeaponEditDialog` 只有两个字段：`破限阶段` (0-4) 和 `等级` (1-90)。
 
-- [ ] **Step 1: 创建 `WeaponEditDialog.tsx`**（复制 `OperatorEditDialog.tsx` 并把类型换成 `Weapon`）
+`WeaponGrid` 按 `star` 分组显示（6★/5★/4★/3★ 四个区块）。
 
-- [ ] **Step 2: 创建 `WeaponList.tsx`**（复制 `OperatorList.tsx` 并替换所有 Operator 相关名称）
-
-- [ ] **Step 3: 改 `WeaponsPage.tsx`**
+- [ ] **Step 1：实现 `WeaponEditDialog.tsx`**（复制 OperatorEditDialog 模式，字段改为 2 个）
 
 ```tsx
-import { WeaponList } from '@/components/weapons/WeaponList';
+// frontend/src/components/weapons/WeaponEditDialog.tsx
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useEffect, useState } from 'react';
+import type { WeaponState } from '@/store/app-store';
+
+const DEFAULT: WeaponState = { 破限阶段: 0, 等级: 1 };
+
+export function WeaponEditDialog({
+  weaponName, open, onOpenChange, initial, onSave, onRemove,
+}: {
+  weaponName: string | null;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initial?: WeaponState;
+  onSave: (state: WeaponState) => void;
+  onRemove?: () => void;
+}) {
+  const [state, setState] = useState<WeaponState>(initial ?? DEFAULT);
+  useEffect(() => { setState(initial ?? DEFAULT); }, [initial, open]);
+  if (!weaponName) return null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{weaponName}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>破限阶段</Label>
+            <Input type="number" min={0} max={4} value={state.破限阶段} onChange={(e) => setState((s) => ({ ...s, 破限阶段: Math.max(0, Math.min(4, Number(e.target.value) || 0)) }))} />
+          </div>
+          <div>
+            <Label>等级</Label>
+            <Input type="number" min={1} max={90} value={state.等级} onChange={(e) => setState((s) => ({ ...s, 等级: Math.max(1, Math.min(90, Number(e.target.value) || 1)) }))} />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          {onRemove && <Button variant="destructive" onClick={onRemove}>移除</Button>}
+          <Button onClick={() => onSave(state)}>保存</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+- [ ] **Step 2：实现 `WeaponGrid.tsx`**
+
+```tsx
+// frontend/src/components/weapons/WeaponGrid.tsx
+import { useState } from 'react';
+import { WEAPON_LIST } from '@/data/weapons';
+import { useAppStore } from '@/store/app-store';
+import { WeaponEditDialog } from './WeaponEditDialog';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+
+export function WeaponGrid() {
+  const owned = useAppStore((s) => s.ownedWeapons);
+  const setOwned = useAppStore((s) => s.setOwnedWeapon);
+  const removeOwned = useAppStore((s) => s.removeOwnedWeapon);
+  const [filter, setFilter] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+
+  const groups: Array<{ star: 3 | 4 | 5 | 6; items: typeof WEAPON_LIST }> = [
+    { star: 6, items: WEAPON_LIST.filter((w) => w.star === 6 && (!filter || w.name.includes(filter))) },
+    { star: 5, items: WEAPON_LIST.filter((w) => w.star === 5 && (!filter || w.name.includes(filter))) },
+    { star: 4, items: WEAPON_LIST.filter((w) => w.star === 4 && (!filter || w.name.includes(filter))) },
+    { star: 3, items: WEAPON_LIST.filter((w) => w.star === 3 && (!filter || w.name.includes(filter))) },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Input placeholder="搜索武器..." value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-xs" />
+      {groups.map((g) => g.items.length > 0 && (
+        <section key={g.star} className="space-y-2">
+          <h3 className="font-semibold">{g.star}★</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {g.items.map((w) => {
+              const has = owned[w.name];
+              return (
+                <div key={w.name} className={`border rounded-md p-3 flex items-center justify-between ${has ? 'bg-accent/40' : ''}`}>
+                  <div>
+                    <div className="font-medium">{w.name}</div>
+                    <div className="text-xs text-muted-foreground">{has ? `破${has.破限阶段} Lv.${has.等级}` : '未持有'}</div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setEditing(w.name)}>{has ? '编辑' : '添加'}</Button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+      <WeaponEditDialog
+        weaponName={editing}
+        open={!!editing}
+        onOpenChange={(o) => !o && setEditing(null)}
+        initial={editing ? owned[editing] : undefined}
+        onSave={(state) => { if (editing) { setOwned(editing, state); setEditing(null); } }}
+        onRemove={editing && owned[editing] ? () => { removeOwned(editing); setEditing(null); } : undefined}
+      />
+    </div>
+  );
+}
+```
+
+- [ ] **Step 3：改 `WeaponsPage.tsx`**
+
+```tsx
+import { WeaponGrid } from '@/components/weapons/WeaponGrid';
 
 export default function WeaponsPage() {
   return (
     <div className="p-6 space-y-4">
       <h2 className="text-2xl font-semibold">武器</h2>
-      <p className="text-sm text-muted-foreground">标记你已持有的武器及当前强化/突破。</p>
-      <WeaponList />
+      <p className="text-sm text-muted-foreground">记录你持有的武器和当前破限/等级。</p>
+      <WeaponGrid />
     </div>
   );
 }
 ```
 
-- [ ] **Step 4: 验证 + 提交**
+- [ ] **Step 4：验证 + 提交**
 
 ```bash
-cd frontend && pnpm dev
-# 验证 /weapons
-# Ctrl+C
-
+cd frontend && pnpm dev # 测试 /weapons
 cd ..
 git add frontend/
-git commit -m "feat(weapons): weapon list with edit dialog"
+git commit -m "feat(weapons): weapon grid grouped by star + edit dialog"
 ```
 
 ---
 
-## Task 14：规划页（Planner）
+## Task 15：规划页
 
 **Files:**
 - Rewrite: `frontend/src/pages/PlannerPage.tsx`
-- Create: `frontend/src/components/planner/PlanEditor.tsx`
+- Create: `frontend/src/components/planner/PlanRowList.tsx`
+- Create: `frontend/src/components/planner/AddPlanRowDialog.tsx`
 - Create: `frontend/src/components/planner/CostSummary.tsx`
-- Create: `frontend/src/logic/planner-aggregator.ts`
-- Create: `frontend/src/logic/planner-aggregator.test.ts`
+- Create: `frontend/src/logic/plan-aggregator.ts`
+- Create: `frontend/src/logic/plan-aggregator.test.ts`
 
-规划页展示：
-1. 所有干员/武器规划列表（add/edit/remove）
-2. 聚合总消耗（exp、coin、每种材料）
-3. 对比库存，显示"还缺"
-4. 一键"完成该规划，从库存扣减所需材料 + 把目标等级写回已持有"
+计算：对每条 PlanRow，根据 `(干员, 项目, 现等级, 目标等级)` 调 `calculateProjectMaterials` / `calculateLevelMaterials` / `calculateWeaponLevelCost` / `calculateWeaponBreakCost`；聚合得到总需求。
 
-- [ ] **Step 1: 先写聚合逻辑的 TDD**
+- [ ] **Step 1：TDD plan-aggregator**
 
 ```ts
-// frontend/src/logic/planner-aggregator.test.ts
+// frontend/src/logic/plan-aggregator.test.ts
 import { describe, expect, it, beforeEach } from 'vitest';
-import { computeAllPlannedCost } from './planner-aggregator';
 import { useAppStore } from '@/store/app-store';
+import { computeAllPlanCost, computeRowCost } from './plan-aggregator';
 
-describe('computeAllPlannedCost', () => {
+describe('computeRowCost', () => {
+  it('operator 等级 range → non-empty cost', () => {
+    const c = computeRowCost({
+      id: 'x', 干员: '洛茜', 项目: '等级', 现等级: 1, 目标等级: 3,
+      materials: {}, hidden: false,
+    });
+    expect(Object.keys(c).length).toBeGreaterThan(0);
+  });
+
+  it('operator 精英阶段 0→1 → matches DATABASE generic', () => {
+    const c = computeRowCost({
+      id: 'x', 干员: '洛茜', 项目: '精英阶段', 现等级: 0, 目标等级: 1,
+      materials: {}, hidden: false,
+    });
+    expect(c.折金票).toBe(1600);
+  });
+
+  it('weapon 破限 stage 1 → generic break cost', () => {
+    const c = computeRowCost({
+      id: 'x', 干员: '晨光之刃', 项目: '破限', 现等级: 0, 目标等级: 1,
+      materials: {}, hidden: false,
+    });
+    expect(c.折金票).toBe(2200);
+  });
+});
+
+describe('computeAllPlanCost', () => {
   beforeEach(() => {
     localStorage.clear();
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it('returns empty cost when no plans', () => {
-    const cost = computeAllPlannedCost();
-    expect(cost.exp).toBe(0);
-    expect(cost.coin).toBe(0);
-    expect(Object.keys(cost.materials)).toHaveLength(0);
+  it('returns empty when no rows', () => {
+    expect(computeAllPlanCost()).toEqual({});
   });
 
-  it('sums operator and weapon plans', () => {
-    useAppStore.getState().upsertOperatorPlan({
-      operator_id: 'angelina',
-      current: { level: 1, ascension: 0 },
-      target: { level: 2, ascension: 0 },
+  it('aggregates and skips hidden', () => {
+    useAppStore.getState().addPlanRow({
+      id: 'a', 干员: '洛茜', 项目: '精英阶段', 现等级: 0, 目标等级: 1,
+      materials: {}, hidden: false,
     });
-    const cost = computeAllPlannedCost();
-    expect(cost.exp).toBeGreaterThan(0);
+    useAppStore.getState().addPlanRow({
+      id: 'b', 干员: '洛茜', 项目: '精英阶段', 现等级: 0, 目标等级: 1,
+      materials: {}, hidden: true,
+    });
+    expect(computeAllPlanCost().折金票).toBe(1600);
   });
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
-
-```bash
-cd frontend && pnpm test -- planner-aggregator
-# FAIL
-```
-
-- [ ] **Step 3: 实现 `planner-aggregator.ts`**
+- [ ] **Step 2：实现 `plan-aggregator.ts`**
 
 ```ts
-// frontend/src/logic/planner-aggregator.ts
-import { useAppStore } from '@/store/app-store';
-import { aggregateCosts, computeOperatorCost, computeWeaponCost, type CostMap } from './planner';
+// frontend/src/logic/plan-aggregator.ts
+import { useAppStore, type PlanRow } from '@/store/app-store';
+import {
+  calculateProjectMaterials,
+  calculateLevelMaterials,
+  calculateWeaponLevelCost,
+  calculateWeaponBreakCost,
+  aggregateCosts,
+} from './cost-calc';
+import { WEAPON_LIST } from '@/data/weapons';
+import { CHARACTER_LIST } from '@/data/operators';
+import type { CostMap, UpgradeProject } from '@/data/types';
 
-export function computeAllPlannedCost(): CostMap {
-  const { operatorPlans, weaponPlans } = useAppStore.getState();
-  const opCosts = operatorPlans.map(computeOperatorCost);
-  const wpCosts = weaponPlans.map(computeWeaponCost);
-  return aggregateCosts([...opCosts, ...wpCosts]);
+function isWeapon(name: string): boolean {
+  return WEAPON_LIST.some((w) => w.name === name);
+}
+
+function isOperator(name: string): boolean {
+  return (CHARACTER_LIST as readonly string[]).includes(name);
+}
+
+export function computeRowCost(row: PlanRow): CostMap {
+  if (isOperator(row.干员)) {
+    if (row.项目 === '等级') return calculateLevelMaterials(row.干员, row.现等级, row.目标等级);
+    const c = calculateProjectMaterials(row.干员, row.项目 as UpgradeProject, row.现等级, row.目标等级);
+    return c ?? {};
+  }
+  if (isWeapon(row.干员)) {
+    if (row.项目 === '等级') return calculateWeaponLevelCost(row.现等级, row.目标等级);
+    if (row.项目 === '破限') {
+      // 跨多级破限：从 (现等级+1) 到 目标等级 每级累加
+      let acc: CostMap = {};
+      for (let stage = row.现等级 + 1; stage <= row.目标等级; stage++) {
+        acc = { ...acc };
+        const stageCost = calculateWeaponBreakCost(row.干员, stage as 1 | 2 | 3 | 4);
+        for (const [k, v] of Object.entries(stageCost)) {
+          if (typeof v === 'number') acc[k as keyof CostMap] = ((acc as any)[k] ?? 0) + v;
+        }
+      }
+      return acc;
+    }
+  }
+  return {};
+}
+
+export function computeAllPlanCost(): CostMap {
+  const rows = useAppStore.getState().planRows.filter((r) => !r.hidden);
+  return aggregateCosts(rows.map(computeRowCost));
 }
 ```
 
-- [ ] **Step 4: 运行测试通过**
+- [ ] **Step 3：测试通过**
 
 ```bash
-pnpm test -- planner-aggregator
-# PASS
+pnpm test -- plan-aggregator
 ```
 
-- [ ] **Step 5: 实现 `PlanEditor.tsx`**
+- [ ] **Step 4：实现 `AddPlanRowDialog.tsx`**
 
 ```tsx
-// frontend/src/components/planner/PlanEditor.tsx
-import { useState } from 'react';
-import { OPERATORS } from '@/data/operators';
-import { WEAPONS } from '@/data/weapons';
-import { useAppStore } from '@/store/app-store';
-import { Button } from '@/components/ui/button';
+// frontend/src/components/planner/AddPlanRowDialog.tsx
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { CHARACTER_LIST } from '@/data/operators';
+import { WEAPON_LIST } from '@/data/weapons';
+import { useAppStore } from '@/store/app-store';
+import { computeRowCost } from '@/logic/plan-aggregator';
 
-export function PlanEditor() {
-  const plans = useAppStore((s) => s.operatorPlans);
-  const wPlans = useAppStore((s) => s.weaponPlans);
+const OP_PROJECTS = ['等级', '精英阶段', '装备适配', '天赋', '基建', '能力值（信赖）', '技能1', '技能2', '技能3', '技能4'];
+const WP_PROJECTS = ['等级', '破限'];
+
+export function AddPlanRowDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const addRow = useAppStore((s) => s.addPlanRow);
   const ownedOps = useAppStore((s) => s.ownedOperators);
   const ownedWps = useAppStore((s) => s.ownedWeapons);
-  const upsertOp = useAppStore((s) => s.upsertOperatorPlan);
-  const removeOp = useAppStore((s) => s.removeOperatorPlan);
-  const upsertWp = useAppStore((s) => s.upsertWeaponPlan);
-  const removeWp = useAppStore((s) => s.removeWeaponPlan);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [kind, setKind] = useState<'operator' | 'weapon'>('operator');
-  const [selectedId, setSelectedId] = useState('');
-  const [currentLevel, setCurrentLevel] = useState(1);
-  const [currentAsc, setCurrentAsc] = useState(0);
-  const [targetLevel, setTargetLevel] = useState(10);
-  const [targetAsc, setTargetAsc] = useState(0);
+  const [target, setTarget] = useState('');
+  const [project, setProject] = useState('');
+  const [from, setFrom] = useState(0);
+  const [to, setTo] = useState(1);
 
-  function openForNew(k: 'operator' | 'weapon') {
-    setKind(k);
-    setSelectedId('');
-    const has = k === 'operator' ? undefined : undefined;
-    setCurrentLevel(has?.level ?? 1);
-    setCurrentAsc(has?.ascension ?? 0);
-    setTargetLevel(10);
-    setTargetAsc(0);
-    setDialogOpen(true);
-  }
+  const isWeapon = WEAPON_LIST.some((w) => w.name === target);
+  const isOp = (CHARACTER_LIST as readonly string[]).includes(target);
+  const projects = isWeapon ? WP_PROJECTS : OP_PROJECTS;
+
+  useEffect(() => {
+    if (!target) return;
+    if (!projects.includes(project)) setProject(projects[0]);
+    // 根据已持有状态初始化 from
+    if (isOp && ownedOps[target]) {
+      const st = ownedOps[target];
+      if (project === '等级') setFrom(st.等级);
+      else if (project === '精英阶段') setFrom(st.精英阶段);
+      else if (project === '装备适配') setFrom(st.装备适配);
+      else if (project === '天赋') setFrom(st.天赋);
+      else if (project === '基建') setFrom(st.基建);
+      else if (project === '能力值（信赖）') setFrom(st.信赖);
+      else if (project.startsWith('技能')) setFrom((st as any)[project]);
+    } else if (isWeapon && ownedWps[target]) {
+      const st = ownedWps[target];
+      if (project === '等级') setFrom(st.等级);
+      else if (project === '破限') setFrom(st.破限阶段);
+    }
+  }, [target, project, isOp, isWeapon, ownedOps, ownedWps]);
 
   function handleSave() {
-    if (!selectedId) return;
-    if (kind === 'operator') {
-      upsertOp({ operator_id: selectedId, current: { level: currentLevel, ascension: currentAsc }, target: { level: targetLevel, ascension: targetAsc } });
-    } else {
-      upsertWp({ weapon_id: selectedId, current: { level: currentLevel, ascension: currentAsc }, target: { level: targetLevel, ascension: targetAsc } });
-    }
-    setDialogOpen(false);
+    if (!target || !project || from >= to) return;
+    const row = {
+      id: crypto.randomUUID(),
+      干员: target,
+      项目: project as any,
+      现等级: from,
+      目标等级: to,
+      materials: {},
+      hidden: false,
+    };
+    row.materials = computeRowCost(row);
+    addRow(row);
+    onOpenChange(false);
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <Button onClick={() => openForNew('operator')}>添加干员规划</Button>
-        <Button variant="outline" onClick={() => openForNew('weapon')}>添加武器规划</Button>
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="font-semibold">干员规划</h3>
-        {plans.length === 0 && <div className="text-sm text-muted-foreground">暂无。</div>}
-        {plans.map((p) => {
-          const op = OPERATORS.find((o) => o.id === p.operator_id);
-          return (
-            <div key={p.operator_id} className="border rounded-md p-3 flex items-center justify-between">
-              <div>
-                <div className="font-medium">{op?.name ?? p.operator_id}</div>
-                <div className="text-xs text-muted-foreground">
-                  Lv.{p.current.level}（突破{p.current.ascension}）→ Lv.{p.target.level}（突破{p.target.ascension}）
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => removeOp(p.operator_id)}>移除</Button>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="font-semibold">武器规划</h3>
-        {wPlans.length === 0 && <div className="text-sm text-muted-foreground">暂无。</div>}
-        {wPlans.map((p) => {
-          const w = WEAPONS.find((x) => x.id === p.weapon_id);
-          return (
-            <div key={p.weapon_id} className="border rounded-md p-3 flex items-center justify-between">
-              <div>
-                <div className="font-medium">{w?.name ?? p.weapon_id}</div>
-                <div className="text-xs text-muted-foreground">
-                  Lv.{p.current.level}（突破{p.current.ascension}）→ Lv.{p.target.level}（突破{p.target.ascension}）
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => removeWp(p.weapon_id)}>移除</Button>
-            </div>
-          );
-        })}
-      </div>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{kind === 'operator' ? '添加干员规划' : '添加武器规划'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>新增规划</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>干员 / 武器</Label>
+            <select className="w-full border rounded-md px-2 py-1.5 bg-background" value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">-- 选择 --</option>
+              <optgroup label="干员">
+                {CHARACTER_LIST.map((n) => <option key={n} value={n}>{n}</option>)}
+              </optgroup>
+              <optgroup label="武器">
+                {WEAPON_LIST.map((w) => <option key={w.name} value={w.name}>{w.name}</option>)}
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <Label>升级项目</Label>
+            <select className="w-full border rounded-md px-2 py-1.5 bg-background" value={project} onChange={(e) => setProject(e.target.value)}>
+              {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label>{kind === 'operator' ? '干员' : '武器'}</Label>
-              <select
-                className="w-full border rounded-md px-2 py-1.5 bg-background"
-                value={selectedId}
-                onChange={(e) => {
-                  setSelectedId(e.target.value);
-                  const has = kind === 'operator' ? ownedOps[e.target.value] : ownedWps[e.target.value];
-                  if (has) {
-                    setCurrentLevel(has.level);
-                    setCurrentAsc(has.ascension);
-                  }
-                }}
-              >
-                <option value="">-- 请选择 --</option>
-                {(kind === 'operator' ? OPERATORS : WEAPONS).map((x) => (
-                  <option key={x.id} value={x.id}>{x.name}</option>
-                ))}
-              </select>
+              <Label>当前</Label>
+              <Input type="number" value={from} onChange={(e) => setFrom(Number(e.target.value) || 0)} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>当前等级</Label><Input type="number" min={1} value={currentLevel} onChange={(e) => setCurrentLevel(Math.max(1, Number(e.target.value) || 1))} /></div>
-              <div><Label>当前突破</Label><Input type="number" min={0} value={currentAsc} onChange={(e) => setCurrentAsc(Math.max(0, Number(e.target.value) || 0))} /></div>
-              <div><Label>目标等级</Label><Input type="number" min={1} value={targetLevel} onChange={(e) => setTargetLevel(Math.max(1, Number(e.target.value) || 1))} /></div>
-              <div><Label>目标突破</Label><Input type="number" min={0} value={targetAsc} onChange={(e) => setTargetAsc(Math.max(0, Number(e.target.value) || 0))} /></div>
+            <div>
+              <Label>目标</Label>
+              <Input type="number" value={to} onChange={(e) => setTo(Number(e.target.value) || 0)} />
             </div>
           </div>
-          <DialogFooter>
-            <Button onClick={handleSave} disabled={!selectedId}>保存</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSave} disabled={!target || from >= to}>保存</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+- [ ] **Step 5：实现 `PlanRowList.tsx`**
+
+```tsx
+// frontend/src/components/planner/PlanRowList.tsx
+import { useAppStore } from '@/store/app-store';
+import { Button } from '@/components/ui/button';
+
+export function PlanRowList() {
+  const rows = useAppStore((s) => s.planRows);
+  const remove = useAppStore((s) => s.removePlanRow);
+  const update = useAppStore((s) => s.updatePlanRow);
+
+  if (rows.length === 0) return <div className="text-sm text-muted-foreground">暂无规划。点击"新增规划"添加。</div>;
+
+  return (
+    <div className="space-y-2">
+      {rows.map((r) => (
+        <div key={r.id} className={`border rounded-md p-3 flex items-center justify-between ${r.hidden ? 'opacity-50' : ''}`}>
+          <div>
+            <div className="font-medium">{r.干员} · {r.项目}</div>
+            <div className="text-xs text-muted-foreground">{r.现等级} → {r.目标等级}</div>
+          </div>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="sm" onClick={() => update(r.id, { hidden: !r.hidden })}>{r.hidden ? '启用' : '禁用'}</Button>
+            <Button variant="ghost" size="sm" onClick={() => remove(r.id)}>移除</Button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 ```
 
-- [ ] **Step 6: 实现 `CostSummary.tsx`**
+- [ ] **Step 6：实现 `CostSummary.tsx`**
 
 ```tsx
 // frontend/src/components/planner/CostSummary.tsx
 import { useAppStore } from '@/store/app-store';
-import { computeAllPlannedCost } from '@/logic/planner-aggregator';
-import { diffStock } from '@/logic/stock';
-import { MATERIAL_BY_ID } from '@/data/materials';
+import { computeAllPlanCost } from '@/logic/plan-aggregator';
+import { diffStock, deductStock } from '@/logic/stock';
 import { Button } from '@/components/ui/button';
+import { MATERIAL_COLUMNS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
 
 export function CostSummary() {
   const stock = useAppStore((s) => s.stock);
+  const planRows = useAppStore((s) => s.planRows);
   const replaceStock = useAppStore((s) => s.replaceStock);
-  const operatorPlans = useAppStore((s) => s.operatorPlans);
-  const weaponPlans = useAppStore((s) => s.weaponPlans);
-  const setOwnedOperator = useAppStore((s) => s.setOwnedOperator);
-  const setOwnedWeapon = useAppStore((s) => s.setOwnedWeapon);
-  const removeOperatorPlan = useAppStore((s) => s.removeOperatorPlan);
-  const removeWeaponPlan = useAppStore((s) => s.removeWeaponPlan);
+  const setOwnedOp = useAppStore((s) => s.setOwnedOperator);
+  const setOwnedWp = useAppStore((s) => s.setOwnedWeapon);
+  const removeRow = useAppStore((s) => s.removePlanRow);
+  const ownedOps = useAppStore((s) => s.ownedOperators);
+  const ownedWps = useAppStore((s) => s.ownedWeapons);
 
-  const cost = computeAllPlannedCost();
-  const missing = diffStock(stock, cost.materials);
+  const cost = computeAllPlanCost();
+  const missing = diffStock(stock, cost);
+  const hasPlans = planRows.some((r) => !r.hidden);
 
   function completeAll() {
-    // 扣减库存
-    const newStock = { ...stock };
-    for (const [id, n] of Object.entries(cost.materials)) {
-      newStock[id] = Math.max(0, (newStock[id] ?? 0) - n);
-    }
-    replaceStock(newStock);
-    // 目标写回已持有 + 清除规划
-    for (const p of operatorPlans) {
-      setOwnedOperator(p.operator_id, { level: p.target.level, ascension: p.target.ascension });
-      removeOperatorPlan(p.operator_id);
-    }
-    for (const p of weaponPlans) {
-      setOwnedWeapon(p.weapon_id, { level: p.target.level, ascension: p.target.ascension });
-      removeWeaponPlan(p.weapon_id);
+    // 扣库存（EXP 虚拟不动）
+    const realCost = { ...cost };
+    for (const ex of VIRTUAL_EXP_MATERIALS) delete (realCost as any)[ex];
+    replaceStock(deductStock(stock, realCost));
+    // 回写 owned
+    for (const r of planRows) {
+      if (r.hidden) continue;
+      // 操作员
+      if (ownedOps[r.干员] && r.项目 !== '破限') {
+        const st = { ...ownedOps[r.干员] };
+        if (r.项目 === '等级') st.等级 = r.目标等级;
+        else if (r.项目 === '精英阶段') st.精英阶段 = r.目标等级;
+        else if (r.项目 === '装备适配') st.装备适配 = r.目标等级;
+        else if (r.项目 === '天赋') st.天赋 = r.目标等级;
+        else if (r.项目 === '基建') st.基建 = r.目标等级;
+        else if (r.项目 === '能力值（信赖）') st.信赖 = r.目标等级;
+        else if (r.项目.startsWith('技能')) (st as any)[r.项目] = r.目标等级;
+        setOwnedOp(r.干员, st);
+      }
+      // 武器
+      if (ownedWps[r.干员]) {
+        const st = { ...ownedWps[r.干员] };
+        if (r.项目 === '等级') st.等级 = r.目标等级;
+        else if (r.项目 === '破限') st.破限阶段 = r.目标等级;
+        setOwnedWp(r.干员, st);
+      }
+      removeRow(r.id);
     }
   }
-
-  const hasPlans = operatorPlans.length > 0 || weaponPlans.length > 0;
 
   return (
     <div className="border rounded-md p-4 space-y-3">
       <h3 className="font-semibold">消耗汇总</h3>
-      <div className="text-sm grid grid-cols-2 gap-y-1">
-        <div>总 EXP</div><div className="text-right font-mono">{cost.exp.toLocaleString()}</div>
-        <div>总金币</div><div className="text-right font-mono">{cost.coin.toLocaleString()}</div>
-      </div>
-      <div>
-        <div className="text-sm font-medium mb-1">材料消耗</div>
-        {Object.keys(cost.materials).length === 0 && <div className="text-xs text-muted-foreground">无</div>}
-        <div className="grid grid-cols-2 gap-y-1 text-sm">
-          {Object.entries(cost.materials).map(([id, n]) => {
-            const have = stock[id] ?? 0;
-            const short = have < n;
-            return (
-              <div key={id} className="contents">
-                <div>{MATERIAL_BY_ID[id]?.name ?? id}</div>
-                <div className={`text-right font-mono ${short ? 'text-destructive' : ''}`}>
-                  {have} / {n} {short && `(缺 ${n - have})`}
-                </div>
+      <div className="grid grid-cols-2 text-sm gap-y-1">
+        {MATERIAL_COLUMNS.map((m) => {
+          const need = cost[m as MaterialName];
+          if (!need) return null;
+          const have = stock[m as MaterialName] ?? 0;
+          const short = have < need && !VIRTUAL_EXP_MATERIALS.has(m);
+          return (
+            <div key={m} className="contents">
+              <div>{m}</div>
+              <div className={`text-right font-mono ${short ? 'text-destructive' : ''}`}>
+                {VIRTUAL_EXP_MATERIALS.has(m) ? `${need.toLocaleString()}` : `${have} / ${need}${short ? ` (缺 ${need - have})` : ''}`}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
       {Object.keys(missing).length === 0 && hasPlans && (
         <Button onClick={completeAll}>完成全部规划（扣减库存）</Button>
@@ -2142,67 +2161,65 @@ export function CostSummary() {
 }
 ```
 
-- [ ] **Step 7: 改 `PlannerPage.tsx`**
+- [ ] **Step 7：写 `PlannerPage.tsx`**
 
 ```tsx
 // frontend/src/pages/PlannerPage.tsx
-import { PlanEditor } from '@/components/planner/PlanEditor';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { PlanRowList } from '@/components/planner/PlanRowList';
+import { AddPlanRowDialog } from '@/components/planner/AddPlanRowDialog';
 import { CostSummary } from '@/components/planner/CostSummary';
 
 export default function PlannerPage() {
+  const [addOpen, setAddOpen] = useState(false);
   return (
-    <div className="p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+    <div className="p-6 grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
       <div className="space-y-4">
-        <h2 className="text-2xl font-semibold">规划</h2>
-        <PlanEditor />
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold">规划</h2>
+          <Button onClick={() => setAddOpen(true)}>新增规划</Button>
+        </div>
+        <PlanRowList />
       </div>
       <CostSummary />
+      <AddPlanRowDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }
 ```
 
-- [ ] **Step 8: 人工验证**
+- [ ] **Step 8：验证 + 提交**
 
 ```bash
 cd frontend && pnpm dev
-# 访问 /planner
-# 1. 添加一个干员规划，汇总右侧应实时更新
-# 2. /stock 里手动塞足够库存，回 /planner 看是否出现"完成全部规划"按钮
-# 3. 点击后规划应清空，已持有等级更新，库存扣减
-# Ctrl+C
-```
-
-- [ ] **Step 9: 提交**
-
-```bash
+# 全流程测试：加干员 → 加规划行 → 看汇总 → /stock 塞够料 → 完成
 cd ..
 git add frontend/
-git commit -m "feat(planner): planner page with cost summary and completion"
+git commit -m "feat(planner): planner page with aggregation and completion"
 ```
 
 ---
 
-## Task 15：设置页（备份/导入/深色模式）
+## Task 16：设置页
 
-**Files:**
-- Rewrite: `frontend/src/pages/SettingsPage.tsx`
+**Files:** Rewrite `frontend/src/pages/SettingsPage.tsx`
 
-- [ ] **Step 1: 实现 `SettingsPage.tsx`**
+（与 v1 相同。）
 
 ```tsx
 // frontend/src/pages/SettingsPage.tsx
-import { useAppStore } from '@/store/app-store';
-import { Button } from '@/components/ui/button';
 import { useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { useAppStore } from '@/store/app-store';
 
 export default function SettingsPage() {
   const darkMode = useAppStore((s) => s.settings.darkMode);
   const toggleDarkMode = useAppStore((s) => s.toggleDarkMode);
   const exportSnapshot = useAppStore((s) => s.exportSnapshot);
   const importSnapshot = useAppStore((s) => s.importSnapshot);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
   function handleExport() {
     const json = exportSnapshot();
@@ -2213,173 +2230,128 @@ export default function SettingsPage() {
     a.download = `zmd-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setMessage('已导出备份');
+    setMsg('已导出');
   }
-
   function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        importSnapshot(reader.result as string);
-        setMessage('已导入备份');
-      } catch (err) {
-        setMessage('导入失败：JSON 格式不正确');
-      }
-    };
-    reader.readAsText(file);
+    const f = e.target.files?.[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { try { importSnapshot(r.result as string); setMsg('已导入'); } catch { setMsg('导入失败：JSON 无效'); } };
+    r.readAsText(f);
     e.target.value = '';
   }
 
   return (
     <div className="p-6 space-y-6 max-w-xl">
       <h2 className="text-2xl font-semibold">设置</h2>
-
       <section className="space-y-2">
         <h3 className="font-semibold">外观</h3>
-        <Button variant="outline" onClick={toggleDarkMode}>
-          {darkMode ? '切换为浅色' : '切换为深色'}
-        </Button>
+        <Button variant="outline" onClick={toggleDarkMode}>{darkMode ? '切换为浅色' : '切换为深色'}</Button>
       </section>
-
       <section className="space-y-2">
-        <h3 className="font-semibold">备份与恢复</h3>
-        <p className="text-sm text-muted-foreground">数据存储在浏览器 localStorage，换浏览器或清除数据前请导出。</p>
+        <h3 className="font-semibold">备份</h3>
         <div className="flex gap-2">
           <Button onClick={handleExport}>导出 JSON</Button>
-          <Button variant="outline" onClick={() => fileInput.current?.click()}>导入 JSON</Button>
-          <input ref={fileInput} type="file" accept="application/json" className="hidden" onChange={handleImport} />
+          <Button variant="outline" onClick={() => fileRef.current?.click()}>导入 JSON</Button>
+          <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={handleImport} />
         </div>
-        {message && <div className="text-sm text-muted-foreground">{message}</div>}
+        {msg && <div className="text-sm text-muted-foreground">{msg}</div>}
       </section>
     </div>
   );
 }
 ```
 
-- [ ] **Step 2: 验证**
+- [ ] **验证 + 提交**
 
 ```bash
 cd frontend && pnpm dev
-# /settings：
-# 1. 切换深色模式生效
-# 2. 导出文件下载 OK
-# 3. 清 localStorage 后重新导入，数据恢复
-# Ctrl+C
-```
-
-- [ ] **Step 3: 提交**
-
-```bash
 cd ..
 git add frontend/
-git commit -m "feat(settings): dark mode + backup/restore"
+git commit -m "feat(settings): dark mode + JSON backup/restore"
 ```
 
 ---
 
-## Task 16：README + 本地运行说明
-
-**Files:**
-- Rewrite: `README.md`
-
-- [ ] **Step 1: 写 README**
+## Task 17：README
 
 ```md
 # ZMD — 终末地养成规划器（本地版）
 
-基于 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的数据和计算逻辑重写的《明日方舟：终末地》养成规划器。纯本地运行，数据存浏览器 localStorage。
+本地复刻 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的《明日方舟：终末地》养成规划器，React + TypeScript 重写，数据完全 1:1 移植。
 
-v1（当前）：前端规划器。
-v2（计划）：Python 后端 + 截图自动识别库存/干员。
+v1：纯前端规划器。v2 计划加 Python 后端做截图自动识别。
 
 ## 启动
 
-### 前置依赖
-- Node.js 20+
-- pnpm（或 npm/yarn）
+前置：Node.js 20+, pnpm。
 
-### 运行
-
-\`\`\`bash
+```bash
 cd frontend
-pnpm install   # 首次
+pnpm install
 pnpm dev
-# 访问 http://localhost:5173
-\`\`\`
+# http://localhost:5173
+```
 
-## 数据管理
+## 功能
 
-- 所有用户数据（库存、干员、武器、规划）存在浏览器 localStorage。
-- 到"设置"页可以**导出 JSON**（跨设备或换浏览器时用），以及**导入 JSON** 恢复。
-
-## 功能清单（v1）
-
-- 材料库存管理
-- 已持有干员/武器管理
-- 规划：选择干员/武器的目标等级+突破，自动聚合所有材料消耗
-- 规划完成后一键扣减库存、回写已持有等级
+- 库存管理（35 种材料，EXP 自动从卡片换算）
+- 干员管理（25 个，10 个升级维度）
+- 武器管理（67 个，按星级分组）
+- 规划器（增删规划、聚合消耗、缺料提示、一键完成）
+- 备份/恢复（JSON）
 - 深色模式
 
-## 未来（v2）
+## 数据更新
 
-- 后端 FastAPI + OpenCV + PaddleOCR，从库存截图自动识别材料数量
-- 同样的方式识别干员列表
+游戏数据由 `scripts/port-data.mjs` 从 `reference/zmdgraph/` 自动抽取。要同步上游更新：
 
-## 开发
+```bash
+cd reference/zmdgraph && git pull
+cd ../../frontend && node scripts/port-data.mjs all
+```
 
-\`\`\`bash
-cd frontend
-pnpm test         # 跑单测
-pnpm build        # 打包
-\`\`\`
+会重新生成 `src/data/*.ts`，人工审 diff 后提交。
 
-## 数据源
+## 测试
 
-- 游戏数据（材料、干员、武器、消耗表）移植自 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的 \`js/data.js\`。
-- 后续图标素材计划来自 [MaaEnd/MaaEnd](https://github.com/MaaEnd/MaaEnd) 的 \`assets/\`（以上游许可证为准）。
-\`\`\`
+```bash
+cd frontend && pnpm test
+```
 
-- [ ] **Step 2: 提交**
+## 致谢
+
+- 游戏数据 / 计算逻辑：[CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph)
+- 后续图标素材（v2）：[MaaEnd/MaaEnd](https://github.com/MaaEnd/MaaEnd)
+```
+
+- [ ] **提交**
 
 ```bash
 git add README.md
-git commit -m "docs: write README with setup and usage"
+git commit -m "docs: v2 README covering ported planner features"
 ```
 
 ---
 
-## Self-Review Notes
+## Self-Review Notes (v2)
 
-本 Plan 的 spec 覆盖检查：
+| 上游结构 | 覆盖于 |
+|---------|-------|
+| MATERIAL_ICONS / _COLUMNS + EXP 换算 | Task 4 |
+| CHARACTER_LIST / SKILL_MAPPING / EXCEPTIONS | Task 5 |
+| WEAPON_LIST / 武器成本表 | Task 6 |
+| DATABASE (697 行) | Task 7 |
+| calculateMaterials / calculateLevelMaterials | Task 8 |
+| Stock + EXP 虚拟材料 | Task 9 |
+| 用户持久数据（含多维 owned state） | Task 10 |
+| UI 层 | Task 11-16 |
+| 数据同步文档 | Task 17 |
 
-| Spec 章节 | 覆盖于 |
-|----------|-------|
-| §1 范围 — 规划功能 | Task 4-15 |
-| §2 架构 — 前端 SPA | Task 2-3, 10 |
-| §4 数据模型 — localStorage | Task 9 |
-| §5 目录结构 — frontend/ | Task 2-15 |
-| §6 运行 — Vite 本地跑 | Task 16 |
-| §7 测试 — Vitest 对纯函数 | Task 4-9, 14 |
-| §3 识别管线 | **Plan B**（本 plan 不覆盖） |
-| §6 运行 — start.sh 前后端一起 | **Plan B**（加后端时补） |
-| §8 数据维护脚本 | Backlog（Plan B 或单独脚本） |
+**Placeholder 扫描**：每个 data port 任务都明确指向 `reference/zmdgraph/js/data.js` 并通过 `scripts/port-data.mjs` 自动生成，不需要手抄数据。Task 4-7 的脚本扩展是增量实现。
 
-**类型一致性**：`CostMap`、`Stock`、`OperatorPlan`、`WeaponPlan`、`MaterialId` 在 planner / stock / store 三处使用一致。
+**类型一致**：`MaterialName`, `CostMap`, `UpgradeProject`, `OperatorState`, `WeaponState`, `PlanRow` 跨多个文件使用一致。
 
-**Placeholder 扫描**：无 TBD/TODO；数据 port 任务在 Task 4/5/6 明确指向 `reference/zmdgraph/js/data.js` 并要求一一对应。
-
----
-
-## Plan B 预告（本 plan 完成后再写）
-
-- Scaffold backend（FastAPI + venv + requirements）
-- 预处理 + 网格检测 pipeline
-- 模板匹配 + PaddleOCR 封装
-- `/recognize/inventory` endpoint + fixture tests
-- `/recognize/operators` endpoint
-- 前端截图上传页 + 识别结果编辑/合并 UI
-- 从 MaaEnd 复制图标素材（含许可证核对）
-- `start.sh` 一键启动前后端
-- 搜索终末地 datamine repo（执行阶段 TODO）
+**已知 gap（刻意不覆盖）**：
+- `FARM_ITEMS`（产出规划）— 暂不用，v1 不覆盖
+- zmdgraph 的"forward/backward compensation"（材料降级/升级替代）— 复杂度高，v1 不做，v2 或 backlog
+- 技能显示名→技能N 映射在 UI 里暂时不用（目前选择器直接用"技能1/2/3/4"）— `mapSkillDisplayToGeneric` helper 已建，未来加截图识别时会用到
