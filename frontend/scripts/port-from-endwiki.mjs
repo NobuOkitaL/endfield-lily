@@ -546,12 +546,14 @@ async function cmdOperators() {
 
     // Only add skill mapping for first occurrence of each char name
     if (!skillMapping.find(e => e['干员'] === charName)) {
+      // Add type prefixes: 技能1=普攻, 技能2=战技, 技能3=连携, 技能4=大招
+      const prefixes = ['普攻:', '战技:', '连携:', '大招:'];
       const entry = {
         '干员': charName,
-        '技能1': skillNames[0] || '',
-        '技能2': skillNames[1] || '',
-        '技能3': skillNames[2] || '',
-        '技能4': skillNames[3] || '',
+        '技能1': skillNames[0] ? `${prefixes[0]}${skillNames[0]}` : '',
+        '技能2': skillNames[1] ? `${prefixes[1]}${skillNames[1]}` : '',
+        '技能3': skillNames[2] ? `${prefixes[2]}${skillNames[2]}` : '',
+        '技能4': skillNames[3] ? `${prefixes[3]}${skillNames[3]}` : '',
       };
       skillMapping.push(entry);
     }

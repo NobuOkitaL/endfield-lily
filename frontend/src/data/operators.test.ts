@@ -3,8 +3,8 @@ import { CHARACTER_LIST, SKILL_MAPPING, EXCEPTIONS, OPERATOR_AVATARS } from './o
 import { mapSkillDisplayToGeneric, isProjectExcluded } from './operators-helpers';
 
 describe('operators data', () => {
-  it('has 25 characters', () => {
-    expect(CHARACTER_LIST.length).toBe(25);
+  it('has 26 characters', () => {
+    expect(CHARACTER_LIST.length).toBe(26);
   });
 
   it('SKILL_MAPPING covers every character', () => {
