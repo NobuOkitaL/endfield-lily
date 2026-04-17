@@ -24,9 +24,11 @@ export function WeaponEditDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{weaponName}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
+        <DialogHeader>
+          <DialogTitle>{weaponName}</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
             <Label>破限阶段</Label>
             <Input
               type="number" min={0} max={4}
@@ -34,7 +36,7 @@ export function WeaponEditDialog({
               onChange={(e) => setState((s) => ({ ...s, 破限阶段: Math.max(0, Math.min(4, Number(e.target.value) || 0)) }))}
             />
           </div>
-          <div>
+          <div className="space-y-1.5">
             <Label>等级</Label>
             <Input
               type="number" min={1} max={90}
@@ -43,8 +45,13 @@ export function WeaponEditDialog({
             />
           </div>
         </div>
-        <DialogFooter className="gap-2">
-          {onRemove && <Button variant="destructive" onClick={onRemove}>移除</Button>}
+        {/* Footer: destructive left, save right */}
+        <DialogFooter className="flex flex-row gap-2 pt-2">
+          {onRemove && (
+            <Button variant="destructive" onClick={onRemove} className="mr-auto">
+              移除
+            </Button>
+          )}
           <Button onClick={() => onSave(state)}>保存</Button>
         </DialogFooter>
       </DialogContent>

@@ -56,9 +56,23 @@ export function CostSummary() {
   }
 
   return (
-    <div className="border rounded-md p-4 space-y-3">
-      <h3 className="font-semibold">消耗汇总</h3>
-      <div className="grid grid-cols-2 text-sm gap-y-1">
+    <div
+      className="rounded-feature p-6 bg-canvas border border-mint flex flex-col gap-4"
+      style={{ position: 'sticky', top: '24px', alignSelf: 'start' }}
+    >
+      {/* Section kicker */}
+      <div>
+        <div
+          className="font-mono uppercase text-mint mb-1"
+          style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+        >
+          COST SUMMARY
+        </div>
+        <h3 className="font-sans font-bold text-white text-xl">消耗汇总</h3>
+      </div>
+
+      {/* Cost rows */}
+      <div className="grid grid-cols-2 gap-y-1.5">
         {MATERIAL_COLUMNS.map((m) => {
           const need = cost[m as MaterialName];
           if (!need) return null;
@@ -67,8 +81,10 @@ export function CostSummary() {
           const short = !isExp && have < need;
           return (
             <div key={m} className="contents">
-              <div>{m}</div>
-              <div className={`text-right font-mono ${short ? 'text-destructive' : ''}`}>
+              <div className="font-sans text-[13px] text-[#e9e9e9]">{m}</div>
+              <div
+                className={`text-right font-mono text-[13px] ${short ? 'text-ultraviolet font-bold' : 'text-white'}`}
+              >
                 {isExp
                   ? need.toLocaleString()
                   : `${have} / ${need}${short ? ` (缺 ${need - have})` : ''}`}
@@ -77,8 +93,12 @@ export function CostSummary() {
           );
         })}
       </div>
+
+      {/* Complete all button — full width at bottom */}
       {hasPlans && Object.keys(missing).length === 0 && (
-        <Button onClick={completeAll}>完成全部规划（扣减库存）</Button>
+        <Button className="w-full mt-2" onClick={completeAll}>
+          完成全部规划（扣减库存）
+        </Button>
       )}
     </div>
   );

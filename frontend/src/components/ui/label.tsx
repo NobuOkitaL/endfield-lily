@@ -5,7 +5,8 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const labelVariants = cva(
-  "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+  // Verge: JetBrains Mono 11px UPPERCASE 1.5px letter-spacing #949494
+  "font-mono uppercase text-[#949494] leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
 )
 
 const Label = React.forwardRef<
@@ -16,6 +17,7 @@ const Label = React.forwardRef<
   <LabelPrimitive.Root
     ref={ref}
     className={cn(labelVariants(), className)}
+    style={{ fontSize: "11px", letterSpacing: "1.5px" }}
     {...props}
   />
 ))

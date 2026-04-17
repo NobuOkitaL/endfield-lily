@@ -11,6 +11,11 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        display: ['Anton', 'Archivo Black', 'Impact', 'sans-serif'],
+        sans: ['Hanken Grotesk', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
@@ -45,11 +50,27 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        /* Verge custom palette */
+        mint: '#3cffd0',
+        ultraviolet: '#5200ff',
+        'link-hover': '#3860be',
+        canvas: '#131313',
+        'slate-surface': '#2d2d2d',
+        'focus-cyan': '#1eaedb',
+        'console-mint': '#309875',
       },
       borderRadius: {
         lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        md: 'calc(var(--radius) - 4px)',
+        sm: 'calc(var(--radius) - 8px)',
+        /* Verge radius scale */
+        pill: '24px',
+        feature: '24px',
+        cta: '30px',
+        'outline-cta': '40px',
+        tag: '20px',
+        form: '2px',
+        card: '20px',
       },
       keyframes: {
         'accordion-down': {

@@ -3,8 +3,6 @@ import { Button } from '@/components/ui/button';
 import { useAppStore } from '@/store/app-store';
 
 export default function SettingsPage() {
-  const darkMode = useAppStore((s) => s.settings.darkMode);
-  const toggleDarkMode = useAppStore((s) => s.toggleDarkMode);
   const exportSnapshot = useAppStore((s) => s.exportSnapshot);
   const importSnapshot = useAppStore((s) => s.importSnapshot);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -39,23 +37,44 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-xl">
-      <h2 className="text-2xl font-semibold">设置</h2>
+    <div className="max-w-xl space-y-10">
+      {/* Page header */}
+      <div>
+        <div
+          className="font-mono uppercase text-mint"
+          style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+        >
+          SETTINGS / 设置
+        </div>
+        <h1
+          className="font-display text-white"
+          style={{ fontSize: '60px', lineHeight: '0.90', letterSpacing: '-0.01em' }}
+        >
+          设置
+        </h1>
+      </div>
 
-      <section className="space-y-2">
-        <h3 className="font-semibold">外观</h3>
-        <Button variant="outline" onClick={toggleDarkMode}>
-          {darkMode ? '切换为浅色模式' : '切换为深色模式'}
-        </Button>
-      </section>
-
-      <section className="space-y-2">
-        <h3 className="font-semibold">备份与恢复</h3>
-        <p className="text-sm text-muted-foreground">
+      {/* Backup section */}
+      <section className="space-y-4">
+        <div>
+          <div
+            className="font-mono uppercase text-mint mb-1"
+            style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+          >
+            BACKUP & RESTORE
+          </div>
+          <h2
+            className="font-display text-white"
+            style={{ fontSize: '32px', lineHeight: '0.90' }}
+          >
+            备份
+          </h2>
+        </div>
+        <p className="font-sans text-[15px] text-[#949494]">
           所有数据存在浏览器 localStorage。换浏览器或清除数据前请导出。
         </p>
-        <div className="flex gap-2">
-          <Button onClick={handleExport}>导出 JSON</Button>
+        <div className="flex gap-3 flex-wrap">
+          <Button variant="default" onClick={handleExport}>导出 JSON</Button>
           <Button variant="outline" onClick={() => fileRef.current?.click()}>导入 JSON</Button>
           <input
             ref={fileRef}
@@ -65,7 +84,14 @@ export default function SettingsPage() {
             onChange={handleImport}
           />
         </div>
-        {msg && <div className="text-sm text-muted-foreground">{msg}</div>}
+        {msg && (
+          <div
+            className="font-mono uppercase text-mint"
+            style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+          >
+            {msg}
+          </div>
+        )}
       </section>
     </div>
   );

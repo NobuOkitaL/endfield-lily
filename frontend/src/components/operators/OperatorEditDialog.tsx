@@ -40,11 +40,13 @@ export function OperatorEditDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
-        <DialogHeader><DialogTitle>{operatorName}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <DialogHeader>
+          <DialogTitle>{operatorName}</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-4">
           {FIELDS.map((f) => (
-            <div key={f.key}>
-              <Label className="text-xs">{f.label}</Label>
+            <div key={f.key} className="space-y-1.5">
+              <Label>{f.label}</Label>
               <Input
                 type="number" min={f.min} max={f.max}
                 value={state[f.key]}
@@ -56,8 +58,13 @@ export function OperatorEditDialog({
             </div>
           ))}
         </div>
-        <DialogFooter className="gap-2">
-          {onRemove && <Button variant="destructive" onClick={onRemove}>移除</Button>}
+        {/* Footer: destructive left, save right */}
+        <DialogFooter className="flex flex-row gap-2 pt-2">
+          {onRemove && (
+            <Button variant="destructive" onClick={onRemove} className="mr-auto">
+              移除
+            </Button>
+          )}
           <Button onClick={() => onSave(state)}>保存</Button>
         </DialogFooter>
       </DialogContent>

@@ -4,55 +4,71 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    /* Verge Canvas — always dark, no light mode */
+    --background: 0 0% 7.5%;        /* #131313 */
+    --foreground: 0 0% 100%;        /* #ffffff */
+    --card: 0 0% 7.5%;              /* #131313 */
+    --card-foreground: 0 0% 100%;   /* #ffffff */
+    --popover: 0 0% 7.5%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 166 100% 61%;        /* #3cffd0 Jelly Mint */
+    --primary-foreground: 0 0% 0%;  /* #000000 */
+    --secondary: 0 0% 17.6%;        /* #2d2d2d Surface Slate */
+    --secondary-foreground: 0 0% 91.4%; /* #e9e9e9 */
+    --muted: 0 0% 17.6%;            /* #2d2d2d */
+    --muted-foreground: 0 0% 58%;   /* #949494 */
+    --accent: 0 0% 17.6%;           /* #2d2d2d */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 255 100% 32%;    /* #5200ff Verge Ultraviolet */
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 100%;            /* #ffffff — alpha applied at usage */
+    --input: 0 0% 17.6%;            /* #2d2d2d */
+    --ring: 193 74% 49%;            /* #1eaedb Focus Cyan */
+    --radius: 24px;
   }
+
+  /* .dark is always active — forced by AppShell */
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --background: 0 0% 7.5%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 7.5%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 7.5%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 166 100% 61%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 17.6%;
+    --secondary-foreground: 0 0% 91.4%;
+    --muted: 0 0% 17.6%;
+    --muted-foreground: 0 0% 58%;
+    --accent: 0 0% 17.6%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 255 100% 32%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 100%;
+    --input: 0 0% 17.6%;
+    --ring: 193 74% 49%;
+    --radius: 24px;
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+    box-sizing: border-box;
+  }
+  html {
+    background-color: #131313;
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    color: #ffffff;
+    background-color: #131313;
+  }
+  /* Strip all box-shadows sitewide — Verge uses 1px borders for elevation */
+  * {
+    box-shadow: none !important;
   }
 }

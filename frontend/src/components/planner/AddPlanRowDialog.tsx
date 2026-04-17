@@ -12,6 +12,12 @@ import { computeRowCost } from '@/logic/plan-aggregator';
 const OP_PROJECTS: PlanProject[] = ['等级', '精英阶段', '装备适配', '天赋', '基建', '能力值（信赖）', '技能1', '技能2', '技能3', '技能4'];
 const WP_PROJECTS: PlanProject[] = ['等级', '破限'];
 
+const selectClass = [
+  'w-full rounded-form px-2 py-1.5 font-sans text-[15px] text-white',
+  'bg-canvas border border-white/30',
+  'focus:outline-none focus:border-mint transition-colors duration-150',
+].join(' ');
+
 export function AddPlanRowDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const addRow = useAppStore((s) => s.addPlanRow);
   const ownedOps = useAppStore((s) => s.ownedOperators);
@@ -73,12 +79,14 @@ export function AddPlanRowDialog({ open, onOpenChange }: { open: boolean; onOpen
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>新增规划</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div>
+        <DialogHeader>
+          <DialogTitle>新增规划</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
             <Label>干员 / 武器</Label>
             <select
-              className="w-full border rounded-md px-2 py-1.5 bg-background"
+              className={selectClass}
               value={target}
               onChange={(e) => setTarget(e.target.value)}
             >
@@ -91,22 +99,22 @@ export function AddPlanRowDialog({ open, onOpenChange }: { open: boolean; onOpen
               </optgroup>
             </select>
           </div>
-          <div>
+          <div className="space-y-1.5">
             <Label>升级项目</Label>
             <select
-              className="w-full border rounded-md px-2 py-1.5 bg-background"
+              className={selectClass}
               value={project}
               onChange={(e) => setProject(e.target.value as PlanProject)}
             >
               {projects.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
               <Label>当前</Label>
               <Input type="number" value={from} onChange={(e) => setFrom(Number(e.target.value) || 0)} />
             </div>
-            <div>
+            <div className="space-y-1.5">
               <Label>目标</Label>
               <Input type="number" value={to} onChange={(e) => setTo(Number(e.target.value) || 0)} />
             </div>
