@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+**/.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+frontend/dist/
+frontend/.vite/
+
+# Reference repos (cloned read-only, never committed)
+reference/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local env
+.env
+.env.local
