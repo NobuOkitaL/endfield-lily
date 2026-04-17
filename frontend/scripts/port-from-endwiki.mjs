@@ -147,6 +147,110 @@ async function fetchCharacterList() {
   return chars;
 }
 
+// ─── Character main page (level-up data) ─────────────────────────────────────
+// The main character page embeds charSliderData as a JSON string in a <script>
+// tag. This data is generic (same for all operators).
+// Banding:
+//   精0: levels 1-20  (transitions from=1..19  → costExp from level 2..20)
+//   精1: levels 21-40 (transitions from=20..39 → costExp from level 21..40)
+//   精2: levels 41-60 (transitions from=40..59 → costExp from level 41..60)
+//   精3: levels 61-80 (transitions from=60..79 → costExp from level 61..80)
+//   精4: levels 81-90 (transitions from=80..89 → costExp from level 81..90)
+// EXP type: 作战记录经验值 for levels 1-60, 认知载体经验值 for 61-90.
+
+async function fetchCharLevelData(slug) {
+  const url = `${BASE_URL}${LANG_PREFIX}/characters/${slug}/`;
+  const html = await fetchPage(url);
+
+  // Extract charSliderData — it's a JS string serialized via JSON.stringify
+  const m = html.match(/charSliderData\s*=\s*(".*?");\s*(?:const|var|let|\/\/|<\/script>)/s);
+  if (!m) return null;
+
+  try {
+    // The value is a JSON-stringified string: parse twice
+    const jsonStr = JSON.parse(m[1]);
+    return JSON.parse(jsonStr);
+  } catch (_e) {
+    return null;
+  }
+}
+
+// ─── Character talents page (基建 data) ───────────────────────────────────────
+// The /talents/ page has a section "后勤技能" with .talent-level divs.
+// Each level has a badge name (e.g. "氏族的礼仪·β") and a break stage
+// (e.g. "突破阶段 1" = stage index 1, mapping to fromLv=0,toLv=1).
+// This is the source for 基建 upgrade costs.
+
+async function fetchCharTalentsBaseBuildingData(slug) {
+  const url = `${BASE_URL}${LANG_PREFIX}/characters/${slug}/talents/`;
+  const html = await fetchPage(url);
+  const $ = cheerio.load(html);
+
+  const result = []; // [{fromLv, toLv, materials: {name: qty}}]
+
+  // Find 后勤技能 section — it's a <section class="detail-section"> with h2 text "后勤技能"
+  let logisticsSec = null;
+  $('section').each((_, sec) => {
+    const h2Text = $(sec).find('h2').first().text().trim();
+    if (h2Text === '后勤技能') {
+      logisticsSec = sec;
+    }
+  });
+  // Fallback: search all h2 elements
+  if (!logisticsSec) {
+    $('h2').each((_, h2) => {
+      if ($(h2).text().trim() === '后勤技能') {
+        logisticsSec = $(h2).closest('section').get(0) || $(h2).parent().get(0);
+      }
+    });
+  }
+
+  if (!logisticsSec) return result;
+
+  // Aggregate costs per breakthrough stage:
+  // Each .talent-level has a .talent-level-break with text "突破阶段 N"
+  // Multiple talent levels may share the same stage; aggregate them.
+  const stageAccum = {}; // stageIdx → {name: qty}
+
+  $(logisticsSec).find('.talent-level').each((_, lvDiv) => {
+    const breakText = $(lvDiv).find('.talent-level-break').text().trim();
+    // "突破阶段 N" → stage index N → fromLv=N-1, toLv=N
+    const stageM = breakText.match(/突破阶段\s*(\d+)/);
+    if (!stageM) return;
+    const stageIdx = parseInt(stageM[1], 10);
+
+    if (!stageAccum[stageIdx]) stageAccum[stageIdx] = {};
+
+    // Parse mat-items within this level's .mat-items container
+    $(lvDiv).find('.mat-items .mat-item').each((_, matEl) => {
+      const txt = $(matEl).contents()
+        .filter((_, n) => n.nodeType === 3)
+        .map((_, n) => n.nodeValue || '').get()
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!txt) return;
+      const parsed = parseMaterialQty(txt);
+      if (parsed) {
+        const canonical = canonicalize(parsed.name);
+        stageAccum[stageIdx][canonical] = (stageAccum[stageIdx][canonical] || 0) + parsed.qty;
+      }
+    });
+  });
+
+  // Convert accumulated stages to result entries
+  for (const [stageIdxStr, mats] of Object.entries(stageAccum)) {
+    const stageIdx = parseInt(stageIdxStr, 10);
+    if (Object.keys(mats).length > 0) {
+      result.push({ fromLv: stageIdx - 1, toLv: stageIdx, materials: mats });
+    }
+  }
+
+  // Sort by fromLv
+  result.sort((a, b) => a.fromLv - b.fromLv);
+  return result;
+}
+
 // ─── Character materials page ──────────────────────────────────────────────────
 // DOM structure (from end.wiki):
 //   <section.detail-section>
@@ -156,7 +260,13 @@ async function fetchCharacterList() {
 //   <section.detail-section>
 //     <h2>突破材料</h2>
 //     <div class="break-summary">
-//       <div>...</div> × 4 stages (stage 1..4 based on order)
+//       <div class="break-row">  — 精英化·一 (stage 0→1)
+//       <div class="break-row">  — 装备适配·一 (stage 0→1)
+//       <div class="break-row">  — 精英化·二 (stage 1→2)
+//       <div class="break-row">  — 装备适配·二 (stage 1→2)
+//       <div class="break-row">  — 精英化·三 (stage 2→3)
+//       <div class="break-row">  — 装备适配·三 (stage 2→3)
+//       <div class="break-row">  — 精英化·四 (stage 3→4) — operator-specific
 //     </div>
 //   </section>
 //   <section.detail-section>
@@ -165,7 +275,7 @@ async function fetchCharacterList() {
 //   </section>
 //   <section.detail-section>
 //     <h2>潜能与天赋升级材料</h2>
-//     <div class="break-row"> × N levels, each has .break-stage text + .break-items > .mat-item
+//     <div class="break-row"> × N levels (信物 + 后勤技能 per breakthrough stage)
 //   </section>
 //   <section.detail-section>
 //     <h2>好感度加成材料</h2>
@@ -179,10 +289,10 @@ async function fetchCharacterMaterials(slug, charName) {
 
   const result = {
     charName,
-    skills: [],       // [{skillName, rows: [{level, 折金票, materials}]}]
-    talents: [],      // [{stageName, materials}]  talent levels
-    favorability: [], // [{stageName, materials}]
-    breakthroughs: [], // [{stage: 1..4, materials}]
+    skills: [],            // [{skillName, rows: [{level, 折金票, materials}]}]
+    favorability: [],      // [{stageName, materials}]
+    eliteBreakthroughs: [], // [{stageIdx: 1..4, materials}]  精英化·X rows
+    equipBreakthroughs: [], // [{stageIdx: 1..3, materials}]  装备适配·X rows (只有折金票)
   };
 
   // Helper: parse mat-item spans to get {name: qty} dict
@@ -226,28 +336,28 @@ async function fetchCharacterMaterials(slug, charName) {
     if (h2) sections[h2] = sec;
   });
 
-  // ── Breakthroughs ──
+  // ── Breakthroughs (精英化 + 装备适配) ──
   const breakSec = sections['突破材料'];
   if (breakSec) {
-    // Each child div of break-summary (or direct children) = one stage
-    const container = $(breakSec).find('.break-summary, div').first();
-    let stageNum = 0;
-    $(container).children('div').each((_, stageDiv) => {
-      stageNum++;
-      const mats = parseMatItems(stageDiv);
-      // Also parse item links as fallback
-      if (Object.keys(mats).length === 0) {
-        $(stageDiv).find('a[href*="/items/"]').each((_, a) => {
-          const txt = $(a).text().replace(/\s+/g, ' ').trim();
-          const parsed = parseLinkMaterialQty(txt);
-          if (parsed) {
-            const canonical = canonicalize(parsed.name);
-            mats[canonical] = (mats[canonical] || 0) + parsed.qty;
-          }
-        });
-      }
-      if (Object.keys(mats).length > 0) {
-        result.breakthroughs.push({ stage: stageNum, materials: mats });
+    $(breakSec).find('.break-row').each((_, rowDiv) => {
+      const stageName = $(rowDiv).find('.break-stage').text().trim();
+      const mats = parseMatItems(rowDiv);
+
+      // Classify by stage name prefix
+      const eliteM = stageName.match(/精英化[··]([一二三四])/);
+      const equipM = stageName.match(/装备适配[··]([一二三四])/);
+      const kanjiMap = { '一': 1, '二': 2, '三': 3, '四': 4 };
+
+      if (eliteM) {
+        const stageIdx = kanjiMap[eliteM[1]] || 0;
+        if (stageIdx > 0 && Object.keys(mats).length > 0) {
+          result.eliteBreakthroughs.push({ stageIdx, materials: mats });
+        }
+      } else if (equipM) {
+        const stageIdx = kanjiMap[equipM[1]] || 0;
+        if (stageIdx > 0 && Object.keys(mats).length > 0) {
+          result.equipBreakthroughs.push({ stageIdx, materials: mats });
+        }
       }
     });
   }
@@ -277,18 +387,6 @@ async function fetchCharacterMaterials(slug, charName) {
 
       if (rows.length > 0) {
         result.skills.push({ skillName, rows });
-      }
-    });
-  }
-
-  // ── Talent/潜能 ──
-  const talentSec = sections['潜能与天赋升级材料'] || sections['天赋升级材料'];
-  if (talentSec) {
-    $(talentSec).find('.break-row').each((_, row) => {
-      const stageName = $(row).find('.break-stage').text().trim();
-      const mats = parseMatItems(row);
-      if (Object.keys(mats).length > 0) {
-        result.talents.push({ stageName, materials: mats });
       }
     });
   }
@@ -627,8 +725,66 @@ async function cmdDatabase() {
     return true;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // B1: 精0-4等级 — generic level-up EXP table (scraped from first char's main page)
+  // ─────────────────────────────────────────────────────────────────────────────
+  console.log('\n  Fetching level-up EXP table...');
+  const firstChar = chars[0];
+  const levelData = await fetchCharLevelData(firstChar.slug);
+
+  if (levelData && levelData.length > 0) {
+    // Banding: level number in each transition tells us which 精X band it belongs to
+    // level = destination level (e.g. level 2 means the 1→2 transition)
+    // 精0: dest levels 2-20  (from 1 to 19)
+    // 精1: dest levels 21-40 (from 20 to 39)
+    // 精2: dest levels 41-60 (from 40 to 59)
+    // 精3: dest levels 61-80 (from 60 to 79)
+    // 精4: dest levels 81-90 (from 80 to 89)
+    const bands = [
+      { name: '精0等级', minLevel: 2,  maxLevel: 20,  expField: '作战记录经验值' },
+      { name: '精1等级', minLevel: 21, maxLevel: 40,  expField: '作战记录经验值' },
+      { name: '精2等级', minLevel: 41, maxLevel: 60,  expField: '作战记录经验值' },
+      { name: '精3等级', minLevel: 61, maxLevel: 80,  expField: '认知载体经验值' },
+      { name: '精4等级', minLevel: 81, maxLevel: 90,  expField: '认知载体经验值' },
+    ];
+
+    for (const entry of levelData) {
+      const { level, costExp, costGold } = entry;
+      if (level < 2) continue; // level 1 has no cost (starting level)
+
+      const band = bands.find(b => level >= b.minLevel && level <= b.maxLevel);
+      if (!band) continue;
+
+      const fromLv = level - 1;
+      const toLv = level;
+      const mats = {};
+      if (costExp > 0) mats[band.expField] = costExp;
+      if (costGold > 0) mats['折金票'] = costGold;
+
+      const row = { 干员: '', 升级项目: band.name, 现等级: fromLv, 目标等级: toLv };
+      for (const [mat, qty] of Object.entries(mats)) {
+        if (qty > 0) row[mat] = qty;
+      }
+      rows.push(row);
+    }
+    console.log(`    Added ${levelData.length - 1} level-up rows (精0-4等级)`);
+  } else {
+    console.warn('    WARNING: Could not extract level-up data from main page');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // B2-B4: Per-character data from /materials/ and /talents/ pages
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // Also track which skills we've seen generics for (levels 2-9)
   const genericSkillsSeen = new Set();
+
+  // Track generic elite/equip breakthrough rows (stages 1-3 are same for all)
+  const genericEliteSeen = new Set();
+  const genericEquipSeen = new Set();
+
+  // Track generic base-building (基建) rows
+  const genericBaseBuildingSeen = new Set();
 
   for (const char of chars) {
     const { name: charName, slug } = char;
@@ -637,6 +793,53 @@ async function cmdDatabase() {
     const matData = await fetchCharacterMaterials(slug, charName);
 
     const skillKeys = ['技能1', '技能2', '技能3', '技能4'];
+
+    // ── B2: 精英阶段 (elite breakthrough) rows ──
+    // Stages 1-3: generic (same for all operators)
+    // Stage 4: operator-specific
+    for (const bt of matData.eliteBreakthroughs) {
+      const { stageIdx, materials } = bt;
+      const fromLv = stageIdx - 1;
+      const toLv = stageIdx;
+      const matsWithGold = { ...materials };
+
+      if (stageIdx <= 3) {
+        // Generic — emit only once
+        const key = `精英阶段:${fromLv}:${toLv}`;
+        if (!genericEliteSeen.has(key)) {
+          genericEliteSeen.add(key);
+          const row = { 干员: '', 升级项目: '精英阶段', 现等级: fromLv, 目标等级: toLv };
+          for (const [mat, qty] of Object.entries(matsWithGold)) {
+            if (qty > 0) row[mat] = qty;
+          }
+          rows.push(row);
+        }
+      } else {
+        // Stage 4: operator-specific
+        const row = { 干员: charName, 升级项目: '精英阶段', 现等级: fromLv, 目标等级: toLv };
+        for (const [mat, qty] of Object.entries(matsWithGold)) {
+          if (qty > 0) row[mat] = qty;
+        }
+        rows.push(row);
+      }
+    }
+
+    // ── B3: 装备适配 (equipment adaptation) rows ──
+    // All stages are generic (only 折金票, no operator-specific materials)
+    for (const bt of matData.equipBreakthroughs) {
+      const { stageIdx, materials } = bt;
+      const fromLv = stageIdx - 1;
+      const toLv = stageIdx;
+      const key = `装备适配:${fromLv}:${toLv}`;
+      if (!genericEquipSeen.has(key)) {
+        genericEquipSeen.add(key);
+        const row = { 干员: '', 升级项目: '装备适配', 现等级: fromLv, 目标等级: toLv };
+        for (const [mat, qty] of Object.entries(materials)) {
+          if (qty > 0) row[mat] = qty;
+        }
+        rows.push(row);
+      }
+    }
 
     // ── Skill rows ──
     for (let si = 0; si < matData.skills.length && si < 4; si++) {
@@ -671,47 +874,6 @@ async function cmdDatabase() {
       }
     }
 
-    // ── Talent rows ──
-    // Stages: "氏族的礼仪 Lv.1" = talent for first talent, "狩猎嗅觉 Lv.1" = second talent
-    // Map to level 0→1, 1→2, 2→3, 3→4 (talent levels)
-    // We skip the "信物" (operator-specific collectibles) rows — those are in 潜能 section
-    const talentRows = matData.talents.filter(t => {
-      // Only include rows that have materials we care about (协议棱柱/组 etc.)
-      return Object.keys(t.materials).some(m => m.includes('协议'));
-    });
-
-    for (let ti = 0; ti < talentRows.length; ti++) {
-      const tlvl = talentRows[ti];
-      const fromLv = ti;
-      const toLv = ti + 1;
-
-      // Try to emit as generic; if materials differ, emit as char-specific
-      const mats = tlvl.materials;
-      const genericHash = `天赋:${fromLv}:${toLv}:${JSON.stringify(mats)}`;
-      if (!genericEmitted.has(genericHash)) {
-        // First time seeing this level — check if there's already a different generic
-        const levelKey = `天赋:${fromLv}:${toLv}:LEVEL_CLAIMED`;
-        if (!genericEmitted.has(levelKey)) {
-          // Emit as generic
-          genericEmitted.add(genericHash);
-          genericEmitted.add(levelKey);
-          const row = { 干员: '', 升级项目: '天赋', 现等级: fromLv, 目标等级: toLv };
-          for (const [mat, qty] of Object.entries(mats)) {
-            if (qty > 0) row[mat] = qty;
-          }
-          rows.push(row);
-        } else {
-          // Already have a generic for this level — emit as char-specific
-          const row = { 干员: charName, 升级项目: '天赋', 现等级: fromLv, 目标等级: toLv };
-          for (const [mat, qty] of Object.entries(mats)) {
-            if (qty > 0) row[mat] = qty;
-          }
-          rows.push(row);
-        }
-      }
-      // If generic already emitted with exact same materials, skip
-    }
-
     // ── Favorability (能力值（信赖）) rows ──
     for (let fi = 0; fi < matData.favorability.length; fi++) {
       const flvl = matData.favorability[fi];
@@ -733,32 +895,89 @@ async function cmdDatabase() {
     }
   }
 
-  // Add static generic rows from existing database.ts (基建, 精X等级, 精英阶段, 装备适配)
-  // Read them from the existing file
-  const existingDbTs = readFileSync(resolve(FRONTEND_DIR, 'src/data/database.ts'), 'utf8');
-  const staticProjects = new Set(['基建', '精0等级', '精1等级', '精2等级', '精3等级', '精4等级', '精英阶段', '装备适配']);
+  // ─────────────────────────────────────────────────────────────────────────────
+  // B4: 基建 — from /talents/ page (后勤技能 section)
+  // Per breakthrough stage: each stage has one or more 后勤技能 upgrades.
+  // We aggregate costs per breakthrough stage (fromLv/toLv) and emit
+  // generic rows (same for all operators).
+  // ─────────────────────────────────────────────────────────────────────────────
+  console.log('\n  Fetching 基建 data from talents pages...');
+  // Aggregate 基建 costs per breakthrough stage across all operators
+  // stageKey → accumulated materials
+  const baseBuildingByStage = {}; // "fromLv:toLv" → [{charName, materials}]
 
-  // Extract all row objects from existing DB
-  const rowRegex = /\{[^{}]+\}/g;
-  let match;
-  while ((match = rowRegex.exec(existingDbTs)) !== null) {
-    try {
-      const rowStr = match[0]
-        .replace(/(\w+):/g, '"$1":')  // quote unquoted keys
-        .replace(/'/g, '"');           // single to double quotes
-      const row = JSON.parse(rowStr);
-      if (row['升级项目'] && staticProjects.has(row['升级项目'])) {
-        rows.push(row);
-      }
-    } catch (_e) {
-      // skip
+  for (const char of chars) {
+    const { name: charName, slug } = char;
+    const bbData = await fetchCharTalentsBaseBuildingData(slug);
+    if (bbData.length === 0) continue;
+
+    for (const { fromLv, toLv, materials } of bbData) {
+      const key = `${fromLv}:${toLv}`;
+      if (!baseBuildingByStage[key]) baseBuildingByStage[key] = [];
+      baseBuildingByStage[key].push({ charName, materials });
     }
   }
+
+  // For each stage, check if all operators have the same costs.
+  // Generic if identical; per-operator if different.
+  for (const [stageKey, entries] of Object.entries(baseBuildingByStage)) {
+    const [fromLv, toLv] = stageKey.split(':').map(Number);
+
+    // Check if all entries are identical
+    const firstHash = JSON.stringify(entries[0].materials);
+    const allSame = entries.every(e => JSON.stringify(e.materials) === firstHash);
+
+    if (allSame) {
+      // Generic row
+      const key = `基建:${fromLv}:${toLv}`;
+      if (!genericBaseBuildingSeen.has(key)) {
+        genericBaseBuildingSeen.add(key);
+        const row = { 干员: '', 升级项目: '基建', 现等级: fromLv, 目标等级: toLv };
+        for (const [mat, qty] of Object.entries(entries[0].materials)) {
+          if (qty > 0) row[mat] = qty;
+        }
+        rows.push(row);
+      }
+    } else {
+      // Emit generic based on first occurrence, then per-operator for different ones
+      const seenHashes = new Set();
+      let genericEmittedForStage = false;
+
+      for (const { charName, materials } of entries) {
+        const hash = JSON.stringify(materials);
+        if (!genericEmittedForStage) {
+          // Emit the first as generic
+          const key = `基建:${fromLv}:${toLv}`;
+          if (!genericBaseBuildingSeen.has(key)) {
+            genericBaseBuildingSeen.add(key);
+            const row = { 干员: '', 升级项目: '基建', 现等级: fromLv, 目标等级: toLv };
+            for (const [mat, qty] of Object.entries(materials)) {
+              if (qty > 0) row[mat] = qty;
+            }
+            rows.push(row);
+            seenHashes.add(hash);
+            genericEmittedForStage = true;
+          }
+        } else if (!seenHashes.has(hash)) {
+          // Different materials — emit as operator-specific
+          seenHashes.add(hash);
+          const row = { 干员: charName, 升级项目: '基建', 现等级: fromLv, 目标等级: toLv };
+          for (const [mat, qty] of Object.entries(materials)) {
+            if (qty > 0) row[mat] = qty;
+          }
+          rows.push(row);
+        }
+      }
+    }
+  }
+
+  const bbCount = Object.values(baseBuildingByStage).flat().length;
+  console.log(`    Processed 基建 data: ${Object.keys(baseBuildingByStage).length} stages from ${chars.length} chars`);
 
   // Sort
   const projectOrder = [
     '精0等级', '精1等级', '精2等级', '精3等级', '精4等级',
-    '精英阶段', '装备适配', '能力值（信赖）', '天赋', '基建',
+    '精英阶段', '装备适配', '能力值（信赖）', '基建',
     '技能1', '技能2', '技能3', '技能4',
   ];
   rows.sort((a, b) => {
