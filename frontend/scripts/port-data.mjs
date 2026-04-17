@@ -324,11 +324,99 @@ function portWeapons() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// database case (Task 7 — placeholder)
+// database case (Task 7)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function portDatabase() {
-  throw new Error('portDatabase: not yet implemented (Task 7)');
+  console.log('Porting database...');
+
+  const { DATABASE } = extractConsts(['DATABASE']);
+
+  if (!Array.isArray(DATABASE) || DATABASE.length === 0) {
+    throw new Error('Validation failed: DATABASE is not a non-empty array');
+  }
+  console.log(`  Found ${DATABASE.length} rows in DATABASE.`);
+
+  // Validate basic structure of each row
+  for (let i = 0; i < DATABASE.length; i++) {
+    const row = DATABASE[i];
+    if (typeof row['干员'] !== 'string') {
+      throw new Error(`Validation failed: row[${i}] 干员 is not a string: ${JSON.stringify(row)}`);
+    }
+    if (typeof row['升级项目'] !== 'string') {
+      throw new Error(`Validation failed: row[${i}] 升级项目 is not a string: ${JSON.stringify(row)}`);
+    }
+    if (typeof row['现等级'] !== 'number') {
+      throw new Error(`Validation failed: row[${i}] 现等级 is not a number: ${JSON.stringify(row)}`);
+    }
+    if (typeof row['目标等级'] !== 'number') {
+      throw new Error(`Validation failed: row[${i}] 目标等级 is not a number: ${JSON.stringify(row)}`);
+    }
+    if (row['目标等级'] <= row['现等级']) {
+      throw new Error(
+        `Validation failed: row[${i}] 目标等级 (${row['目标等级']}) <= 现等级 (${row['现等级']}): ${JSON.stringify(row)}`,
+      );
+    }
+  }
+
+  // Count unique 升级项目 values
+  const projects = new Set(DATABASE.map((r) => r['升级项目']));
+  console.log(`  Unique 升级项目 values (${projects.size}): ${[...projects].join(', ')}`);
+
+  // Sort by (升级项目, 干员, 现等级) for stable git diffs
+  const rows = [...DATABASE];
+  rows.sort((a, b) => {
+    if (a['升级项目'] !== b['升级项目']) return a['升级项目'].localeCompare(b['升级项目']);
+    if (a['干员'] !== b['干员']) return a['干员'].localeCompare(b['干员']);
+    return a['现等级'] - b['现等级'];
+  });
+
+  // Render each row as a TS object literal with properly quoted keys
+  // Keys that are not valid JS identifiers (contain digits, etc.) need quoting.
+  function needsQuoting(key) {
+    return !/^[a-zA-Z_$\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff][\w$\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff]*$/.test(key);
+  }
+
+  function renderRow(row) {
+    const pairs = Object.entries(row).map(([k, v]) => {
+      const keyStr = needsQuoting(k) ? JSON.stringify(k) : k;
+      const valStr = typeof v === 'string' ? JSON.stringify(v) : String(v);
+      return `${keyStr}: ${valStr}`;
+    });
+    return `  { ${pairs.join(', ')} },`;
+  }
+
+  const rowLines = rows.map(renderRow).join('\n');
+
+  const output = [
+    `// frontend/src/data/database.ts`,
+    `// Auto-generated from reference/zmdgraph/js/data.js \u2014 do not edit by hand.`,
+    `// ${rows.length} rows total.`,
+    ``,
+    `import type { MaterialName } from './materials';`,
+    `import type { UpgradeProject } from './types';`,
+    ``,
+    `export interface UpgradeCostRow {`,
+    `  \u5e72\u5458: string; // "" = generic`,
+    `  \u5347\u7ea7\u9879\u76ee: UpgradeProject;`,
+    `  \u73b0\u7b49\u7ea7: number;`,
+    `  \u76ee\u6807\u7b49\u7ea7: number;`,
+    `  // \u4ee5\u4e0b\u6240\u6709\u6750\u6599\u5b57\u6bb5\u5747\u53ef\u9009\u3001\u7a00\u758f\u5b58\u5728`,
+    `  \u6298\u91d1\u7968?: number;`,
+    `  \u4f5c\u6218\u8bb0\u5f55\u7ecf\u9a8c\u503c?: number;`,
+    `  \u8ba4\u77e5\u8f7d\u4f53\u7ecf\u9a8c\u503c?: number;`,
+    `  [mat: string]: number | string | undefined;`,
+    `}`,
+    ``,
+    `export const DATABASE: UpgradeCostRow[] = [`,
+    rowLines,
+    `];`,
+    ``,
+  ].join('\n');
+
+  ensureOutDir();
+  writeOut('database.ts', output);
+  console.log(`  database done (${rows.length} rows).`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
