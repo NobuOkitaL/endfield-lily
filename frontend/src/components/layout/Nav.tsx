@@ -7,6 +7,7 @@ const LINKS = [
   { to: '/stock', label: '库存' },
   { to: '/operators', label: '干员' },
   { to: '/weapons', label: '武器' },
+  { to: '/recognize', label: '识别' },
   { to: '/settings', label: '设置' },
 ];
 

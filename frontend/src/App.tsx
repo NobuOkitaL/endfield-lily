@@ -6,6 +6,7 @@ import OperatorsPage from '@/pages/OperatorsPage';
 import WeaponsPage from '@/pages/WeaponsPage';
 import PlannerPage from '@/pages/PlannerPage';
 import SettingsPage from '@/pages/SettingsPage';
+import RecognizePage from '@/pages/RecognizePage';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/stock" element={<StockPage />} />
           <Route path="/operators" element={<OperatorsPage />} />
           <Route path="/weapons" element={<WeaponsPage />} />
+          <Route path="/recognize" element={<RecognizePage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
