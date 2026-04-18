@@ -56,63 +56,103 @@ export default function HomePage() {
           {'总控核心 LILY // ARKNIGHTS:ENDFIELD // OPERATOR DATA TERMINAL // TALOS II UPLINK // LIVE BUILD //'.repeat(2)}
         </div>
 
-        {/* Hero content */}
-        <div className="relative z-10">
-          {/* Top kicker: game identity */}
-          <div
-            className="font-mono text-[#949494] uppercase mb-5"
-            style={{ fontSize: '12px', letterSpacing: '3px' }}
-          >
-            ARKNIGHTS: ENDFIELD
-          </div>
-
-          {/* Brand mark — single line: 总控核心 (signal yellow) + Lily (white, smaller) */}
-          <div className="flex items-baseline gap-4 flex-wrap">
-            <span
-              className="font-sans text-signal"
-              style={{
-                fontSize: 'clamp(52px, 8vw, 108px)',
-                fontWeight: 700,
-                letterSpacing: '0.02em',
-                lineHeight: '1',
-              }}
+        {/* Hero content — two-column layout: brand left, nav grid right */}
+        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-12 lg:gap-8 items-end">
+          {/* LEFT: Brand mark + tagline */}
+          <div>
+            {/* Top kicker: game identity */}
+            <div
+              className="font-mono text-[#949494] uppercase mb-5"
+              style={{ fontSize: '12px', letterSpacing: '3px' }}
             >
-              总控核心
-            </span>
-            <span
-              className="font-display text-white"
-              style={{
-                fontSize: 'clamp(44px, 6.5vw, 88px)',
-                letterSpacing: '-0.02em',
-                lineHeight: '1',
-              }}
+              ARKNIGHTS: ENDFIELD
+            </div>
+
+            {/* Brand mark — single line: 总控核心 (signal yellow) + Lily (white, smaller) */}
+            <div className="flex items-baseline gap-4 flex-wrap">
+              <span
+                className="font-sans text-signal"
+                style={{
+                  fontSize: 'clamp(52px, 8vw, 108px)',
+                  fontWeight: 700,
+                  letterSpacing: '0.02em',
+                  lineHeight: '1',
+                }}
+              >
+                总控核心
+              </span>
+              <span
+                className="font-display text-white"
+                style={{
+                  fontSize: 'clamp(44px, 6.5vw, 88px)',
+                  letterSpacing: '-0.02em',
+                  lineHeight: '1',
+                }}
+              >
+                Lily
+              </span>
+            </div>
+
+            {/* English kicker */}
+            <div
+              className="font-mono text-[#5a5a5a] uppercase mt-4"
+              style={{ fontSize: '11px', letterSpacing: '2.5px' }}
             >
-              Lily
-            </span>
+              CENTRAL CORE · 终末地前哨
+            </div>
+
+            {/* Subtitle */}
+            <div
+              className="font-sans text-[#949494] mt-6 tracking-wider"
+              style={{ fontSize: '24px', fontWeight: 400 }}
+            >
+              终末地养成规划器
+            </div>
+
+            {/* Tagline */}
+            <div
+              className="font-mono text-[#949494] uppercase mt-6"
+              style={{ fontSize: '13px', letterSpacing: '2.5px' }}
+            >
+              FROM TERRA TO TALOS II
+            </div>
           </div>
 
-          {/* English kicker */}
-          <div
-            className="font-mono text-[#5a5a5a] uppercase mt-4"
-            style={{ fontSize: '11px', letterSpacing: '2.5px' }}
-          >
-            CENTRAL CORE · 终末地前哨
-          </div>
-
-          {/* Subtitle */}
-          <div
-            className="font-sans text-[#949494] mt-6 tracking-wider"
-            style={{ fontSize: '24px', fontWeight: 400 }}
-          >
-            终末地养成规划器
-          </div>
-
-          {/* Tagline */}
-          <div
-            className="font-mono text-[#949494] uppercase mt-6"
-            style={{ fontSize: '13px', letterSpacing: '2.5px' }}
-          >
-            FROM TERRA TO TALOS II
+          {/* RIGHT: 2×2 nav grid */}
+          <div className="grid grid-cols-2 gap-3 lg:w-[420px] w-full">
+            {NAV_CARDS.map((card) => (
+              <Link
+                key={card.to}
+                to={card.to}
+                className="relative block bg-canvas border border-white/15 rounded-card p-5 group
+                           transition-all duration-200
+                           hover:border-signal/60
+                           aspect-square flex flex-col justify-between"
+                style={{ textDecoration: 'none' }}
+              >
+                <CornerBrackets />
+                <div
+                  className="font-mono uppercase text-[#4a4a4a] group-hover:text-signal transition-colors duration-200"
+                  style={{ fontSize: '10px', letterSpacing: '2px' }}
+                >
+                  {card.kicker}
+                </div>
+                <div>
+                  <div
+                    className="font-display text-white group-hover:opacity-90 transition-opacity"
+                    style={{ fontSize: '40px', lineHeight: '0.88' }}
+                  >
+                    {card.label}
+                  </div>
+                  <div
+                    className="font-sans text-[#4a4a4a] mt-1.5 group-hover:text-[#6a6a6a] transition-colors"
+                    style={{ fontSize: '10px', letterSpacing: '0.5px' }}
+                  >
+                    {card.sub}
+                  </div>
+                </div>
+              </Link>
+            ))}
           </div>
         </div>
 
@@ -133,43 +173,6 @@ export default function HomePage() {
         >
           TALOS II UPLINK · ACTIVE
         </div>
-      </div>
-
-      {/* ── Quick-nav cards ──────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pb-12">
-        {NAV_CARDS.map((card) => (
-          <Link
-            key={card.to}
-            to={card.to}
-            className="relative block bg-canvas border border-white/15 rounded-card p-6 group
-                       transition-all duration-200
-                       hover:border-signal/60"
-            style={{ textDecoration: 'none' }}
-          >
-            <CornerBrackets />
-            {/* Mono kicker */}
-            <div
-              className="font-mono uppercase text-[#4a4a4a] mb-3 group-hover:text-signal transition-colors duration-200"
-              style={{ fontSize: '10px', letterSpacing: '2px' }}
-            >
-              {card.kicker}
-            </div>
-            {/* Label */}
-            <div
-              className="font-display text-white group-hover:opacity-90 transition-opacity"
-              style={{ fontSize: '42px', lineHeight: '0.88' }}
-            >
-              {card.label}
-            </div>
-            {/* Sub-label */}
-            <div
-              className="font-sans text-[#4a4a4a] mt-2 group-hover:text-[#6a6a6a] transition-colors"
-              style={{ fontSize: '11px', letterSpacing: '0.5px' }}
-            >
-              {card.sub}
-            </div>
-          </Link>
-        ))}
       </div>
     </div>
   );
