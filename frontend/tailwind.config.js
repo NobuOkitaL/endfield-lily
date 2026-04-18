@@ -12,9 +12,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ['Anton', 'ZCOOL XiaoWei', 'Archivo Black', 'Impact', 'sans-serif'],
-        sans: ['Hanken Grotesk', 'Noto Sans SC', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Noto Sans SC', 'ui-monospace', 'monospace'],
+        display: ['Anton', 'Archivo Black', 'Impact', 'sans-serif'],
+        sans: ['Hanken Grotesk', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
       },
       colors: {
         border: 'hsl(var(--border))',
