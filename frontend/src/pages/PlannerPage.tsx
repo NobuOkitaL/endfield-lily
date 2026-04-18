@@ -3,14 +3,22 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { OperatorGoalCard } from '@/components/planner/OperatorGoalCard';
 import { WeaponGoalCard } from '@/components/planner/WeaponGoalCard';
+import { OperatorGoalDetailDialog } from '@/components/planner/OperatorGoalDetailDialog';
+import { WeaponGoalDetailDialog } from '@/components/planner/WeaponGoalDetailDialog';
 import { AddGoalDialog } from '@/components/planner/AddGoalDialog';
 import { CostSummary } from '@/components/planner/CostSummary';
 import { useAppStore } from '@/store/app-store';
 
 export default function PlannerPage() {
   const [addOpen, setAddOpen] = useState(false);
+  /** id of the currently open detail dialog, null = none */
+  const [detailOpen, setDetailOpen] = useState<string | null>(null);
+
   const operatorGoals = useAppStore((s) => s.operatorGoals);
   const weaponGoals = useAppStore((s) => s.weaponGoals);
+
+  const openOperatorGoal = operatorGoals.find((g) => g.id === detailOpen) ?? null;
+  const openWeaponGoal = weaponGoals.find((g) => g.id === detailOpen) ?? null;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
@@ -39,7 +47,7 @@ export default function PlannerPage() {
 
         {/* Operator goals section */}
         {operatorGoals.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div
               className="font-mono uppercase text-[#5a5a5a] border-b border-white/10 pb-2"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
@@ -47,14 +55,18 @@ export default function PlannerPage() {
               ── 干员规划 ({operatorGoals.length})
             </div>
             {operatorGoals.map((goal) => (
-              <OperatorGoalCard key={goal.id} goal={goal} />
+              <OperatorGoalCard
+                key={goal.id}
+                goal={goal}
+                onClick={() => setDetailOpen(goal.id)}
+              />
             ))}
           </div>
         )}
 
         {/* Weapon goals section */}
         {weaponGoals.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div
               className="font-mono uppercase text-[#5a5a5a] border-b border-white/10 pb-2"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
@@ -62,7 +74,11 @@ export default function PlannerPage() {
               ── 武器规划 ({weaponGoals.length})
             </div>
             {weaponGoals.map((goal) => (
-              <WeaponGoalCard key={goal.id} goal={goal} />
+              <WeaponGoalCard
+                key={goal.id}
+                goal={goal}
+                onClick={() => setDetailOpen(goal.id)}
+              />
             ))}
           </div>
         )}
@@ -80,6 +96,24 @@ export default function PlannerPage() {
 
       <CostSummary />
       <AddGoalDialog open={addOpen} onOpenChange={setAddOpen} />
+
+      {/* Operator detail dialog */}
+      {openOperatorGoal && (
+        <OperatorGoalDetailDialog
+          goal={openOperatorGoal}
+          open={detailOpen === openOperatorGoal.id}
+          onOpenChange={(o) => { if (!o) setDetailOpen(null); }}
+        />
+      )}
+
+      {/* Weapon detail dialog */}
+      {openWeaponGoal && (
+        <WeaponGoalDetailDialog
+          goal={openWeaponGoal}
+          open={detailOpen === openWeaponGoal.id}
+          onOpenChange={(o) => { if (!o) setDetailOpen(null); }}
+        />
+      )}
     </div>
   );
 }
