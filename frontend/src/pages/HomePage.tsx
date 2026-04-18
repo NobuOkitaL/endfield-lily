@@ -107,20 +107,12 @@ export default function HomePage() {
             终末地养成规划器
           </div>
 
-          {/* Tagline — bilingual, stacked */}
-          <div className="mt-6">
-            <div
-              className="font-sans text-white tracking-wider"
-              style={{ fontSize: '16px', fontWeight: 300 }}
-            >
-              从泰拉到塔卫二
-            </div>
-            <div
-              className="font-mono text-[#5a5a5a] uppercase mt-1"
-              style={{ fontSize: '10px', letterSpacing: '2px' }}
-            >
-              FROM TERRA TO TALOS II
-            </div>
+          {/* Tagline */}
+          <div
+            className="font-mono text-[#949494] uppercase mt-6"
+            style={{ fontSize: '13px', letterSpacing: '2.5px' }}
+          >
+            FROM TERRA TO TALOS II
           </div>
         </div>
 
