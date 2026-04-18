@@ -1,12 +1,17 @@
 // frontend/src/pages/PlannerPage.tsx
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { PlanRowList } from '@/components/planner/PlanRowList';
-import { AddPlanRowDialog } from '@/components/planner/AddPlanRowDialog';
+import { OperatorGoalCard } from '@/components/planner/OperatorGoalCard';
+import { WeaponGoalCard } from '@/components/planner/WeaponGoalCard';
+import { AddGoalDialog } from '@/components/planner/AddGoalDialog';
 import { CostSummary } from '@/components/planner/CostSummary';
+import { useAppStore } from '@/store/app-store';
 
 export default function PlannerPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const operatorGoals = useAppStore((s) => s.operatorGoals);
+  const weaponGoals = useAppStore((s) => s.weaponGoals);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
       <div className="space-y-6">
@@ -31,10 +36,50 @@ export default function PlannerPage() {
         <p className="text-[#949494] font-sans text-[15px] -mt-4">
           创建干员和武器的养成目标，自动计算所需材料。
         </p>
-        <PlanRowList />
+
+        {/* Operator goals section */}
+        {operatorGoals.length > 0 && (
+          <div className="space-y-3">
+            <div
+              className="font-mono uppercase text-[#5a5a5a] border-b border-white/10 pb-2"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              ── 干员规划 ({operatorGoals.length})
+            </div>
+            {operatorGoals.map((goal) => (
+              <OperatorGoalCard key={goal.id} goal={goal} />
+            ))}
+          </div>
+        )}
+
+        {/* Weapon goals section */}
+        {weaponGoals.length > 0 && (
+          <div className="space-y-3">
+            <div
+              className="font-mono uppercase text-[#5a5a5a] border-b border-white/10 pb-2"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              ── 武器规划 ({weaponGoals.length})
+            </div>
+            {weaponGoals.map((goal) => (
+              <WeaponGoalCard key={goal.id} goal={goal} />
+            ))}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {operatorGoals.length === 0 && weaponGoals.length === 0 && (
+          <div
+            className="font-mono uppercase text-[#949494]"
+            style={{ fontSize: '11px', letterSpacing: '1.5px' }}
+          >
+            暂无规划。点击"新增规划"添加。
+          </div>
+        )}
       </div>
+
       <CostSummary />
-      <AddPlanRowDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddGoalDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }

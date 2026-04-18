@@ -12,7 +12,8 @@ describe('app store', () => {
     expect(s.stock).toEqual({});
     expect(s.ownedOperators).toEqual({});
     expect(s.ownedWeapons).toEqual({});
-    expect(s.planRows).toEqual([]);
+    expect(s.operatorGoals).toEqual([]);
+    expect(s.weaponGoals).toEqual([]);
     expect(s.settings.darkMode).toBe(false);
   });
 

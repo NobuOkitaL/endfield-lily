@@ -1,5 +1,5 @@
 // frontend/src/logic/plan-aggregator.ts
-import { useAppStore, type PlanRow } from '@/store/app-store';
+import { useAppStore, type OperatorGoal, type WeaponGoal, type OperatorState, type WeaponState, DEFAULT_OPERATOR_STATE, DEFAULT_WEAPON_STATE } from '@/store/app-store';
 import {
   calculateProjectMaterials,
   calculateLevelMaterials,
@@ -8,41 +8,102 @@ import {
   aggregateCosts,
   addCost,
 } from './cost-calc';
-import { WEAPON_LIST } from '@/data/weapons';
-import { CHARACTER_LIST } from '@/data/operators';
-import type { CostMap, UpgradeProject } from '@/data/types';
+import type { CostMap } from '@/data/types';
 
-function isWeapon(name: string): boolean {
-  return WEAPON_LIST.some((w) => w.name === name);
-}
+export function computeOperatorGoalCost(goal: OperatorGoal, current: OperatorState): CostMap {
+  let acc: CostMap = {};
 
-function isOperator(name: string): boolean {
-  return (CHARACTER_LIST as readonly string[]).includes(name);
-}
-
-export function computeRowCost(row: PlanRow): CostMap {
-  if (isOperator(row.干员)) {
-    if (row.项目 === '等级') {
-      return calculateLevelMaterials(row.干员, row.现等级, row.目标等级);
-    }
-    const c = calculateProjectMaterials(row.干员, row.项目 as UpgradeProject, row.现等级, row.目标等级);
-    return c ?? {};
+  // 等级
+  if (goal.target.等级 > current.等级) {
+    acc = addCost(acc, calculateLevelMaterials(goal.operator, current.等级, goal.target.等级));
   }
-  if (isWeapon(row.干员)) {
-    if (row.项目 === '等级') return calculateWeaponLevelCost(row.现等级, row.目标等级);
-    if (row.项目 === '破限') {
-      let acc: CostMap = {};
-      for (let stage = row.现等级 + 1; stage <= row.目标等级; stage++) {
-        if (stage < 1 || stage > 4) continue;
-        acc = addCost(acc, calculateWeaponBreakCost(row.干员, stage as 1 | 2 | 3 | 4));
-      }
-      return acc;
+
+  // 精英阶段 — per-stage loop
+  for (let s = current.精英阶段 + 1; s <= goal.target.精英阶段; s++) {
+    const c = calculateProjectMaterials(goal.operator, '精英阶段', s - 1, s);
+    if (c) acc = addCost(acc, c);
+  }
+
+  // 装备适配
+  for (let s = current.装备适配 + 1; s <= goal.target.装备适配; s++) {
+    const c = calculateProjectMaterials(goal.operator, '装备适配', s - 1, s);
+    if (c) acc = addCost(acc, c);
+  }
+
+  // 天赋
+  for (let s = current.天赋 + 1; s <= goal.target.天赋; s++) {
+    const c = calculateProjectMaterials(goal.operator, '天赋', s - 1, s);
+    if (c) acc = addCost(acc, c);
+  }
+
+  // 基建
+  for (let s = current.基建 + 1; s <= goal.target.基建; s++) {
+    const c = calculateProjectMaterials(goal.operator, '基建', s - 1, s);
+    if (c) acc = addCost(acc, c);
+  }
+
+  // 能力值（信赖）
+  for (let s = current.信赖 + 1; s <= goal.target.信赖; s++) {
+    const c = calculateProjectMaterials(goal.operator, '能力值（信赖）', s - 1, s);
+    if (c) acc = addCost(acc, c);
+  }
+
+  // 技能1-4
+  const skills: Array<keyof OperatorState> = ['技能1', '技能2', '技能3', '技能4'];
+  for (const skill of skills) {
+    const fromLv = current[skill] as number;
+    const toLv = goal.target[skill] as number;
+    if (toLv > fromLv) {
+      const c = calculateProjectMaterials(
+        goal.operator,
+        skill as '技能1' | '技能2' | '技能3' | '技能4',
+        fromLv,
+        toLv,
+      );
+      if (c) acc = addCost(acc, c);
     }
   }
-  return {};
+
+  return acc;
 }
 
-export function computeAllPlanCost(): CostMap {
-  const rows = useAppStore.getState().planRows.filter((r) => !r.hidden);
-  return aggregateCosts(rows.map(computeRowCost));
+export function computeWeaponGoalCost(goal: WeaponGoal, current: WeaponState): CostMap {
+  let acc: CostMap = {};
+
+  // 等级
+  if (goal.target.等级 > current.等级) {
+    acc = addCost(acc, calculateWeaponLevelCost(current.等级, goal.target.等级));
+  }
+
+  // 破限阶段 — per-stage loop
+  for (let s = current.破限阶段 + 1; s <= goal.target.破限阶段; s++) {
+    if (s < 1 || s > 4) continue;
+    acc = addCost(acc, calculateWeaponBreakCost(goal.weapon, s as 1 | 2 | 3 | 4));
+  }
+
+  return acc;
 }
+
+export function computeAllGoalsCost(): CostMap {
+  const state = useAppStore.getState();
+  const costs: CostMap[] = [];
+
+  for (const goal of state.operatorGoals) {
+    if (goal.hidden) continue;
+    const current = state.ownedOperators[goal.operator] ?? DEFAULT_OPERATOR_STATE;
+    costs.push(computeOperatorGoalCost(goal, current));
+  }
+
+  for (const goal of state.weaponGoals) {
+    if (goal.hidden) continue;
+    const current = state.ownedWeapons[goal.weapon] ?? DEFAULT_WEAPON_STATE;
+    costs.push(computeWeaponGoalCost(goal, current));
+  }
+
+  return aggregateCosts(costs);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy export — kept so old tests continue to pass
+// ---------------------------------------------------------------------------
+export { computeAllGoalsCost as computeAllPlanCost };

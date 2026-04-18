@@ -1,59 +1,33 @@
 // frontend/src/components/planner/CostSummary.tsx
 import { useAppStore } from '@/store/app-store';
-import { computeAllPlanCost } from '@/logic/plan-aggregator';
-import { diffStock, deductStock } from '@/logic/stock';
+import { computeAllGoalsCost } from '@/logic/plan-aggregator';
+import { diffStock, type Stock } from '@/logic/stock';
 import { Button } from '@/components/ui/button';
 import { MATERIAL_COLUMNS, MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
 import { CornerBrackets } from '@/components/decor/CornerBrackets';
 
 export function CostSummary() {
   const stock = useAppStore((s) => s.stock);
-  const planRows = useAppStore((s) => s.planRows);
-  const replaceStock = useAppStore((s) => s.replaceStock);
-  const setOwnedOp = useAppStore((s) => s.setOwnedOperator);
-  const setOwnedWp = useAppStore((s) => s.setOwnedWeapon);
-  const removeRow = useAppStore((s) => s.removePlanRow);
-  const ownedOps = useAppStore((s) => s.ownedOperators);
-  const ownedWps = useAppStore((s) => s.ownedWeapons);
+  const operatorGoals = useAppStore((s) => s.operatorGoals);
+  const weaponGoals = useAppStore((s) => s.weaponGoals);
+  const completeAllGoals = useAppStore((s) => s.completeAllGoals);
 
-  const cost = computeAllPlanCost();
+  const cost = computeAllGoalsCost();
 
-  // Compute missing ignoring virtual EXP materials
+  // Real cost excludes virtual EXP materials
   const realCost: Record<string, number> = {};
   for (const [k, v] of Object.entries(cost)) {
     if (typeof v === 'number' && !VIRTUAL_EXP_MATERIALS.has(k as MaterialName)) {
       realCost[k] = v;
     }
   }
-  const missing = diffStock(stock, realCost as any);
-  const hasPlans = planRows.some((r) => !r.hidden);
+
+  const missing = diffStock(stock, realCost as Stock);
+  const hasGoals =
+    operatorGoals.some((g) => !g.hidden) || weaponGoals.some((g) => !g.hidden);
 
   function completeAll() {
-    replaceStock(deductStock(stock, realCost as any));
-    for (const r of planRows) {
-      if (r.hidden) continue;
-      if (ownedOps[r.干员] && r.项目 !== '破限') {
-        const st = { ...ownedOps[r.干员] };
-        if (r.项目 === '等级') st.等级 = r.目标等级;
-        else if (r.项目 === '精英阶段') st.精英阶段 = r.目标等级;
-        else if (r.项目 === '装备适配') st.装备适配 = r.目标等级;
-        else if (r.项目 === '天赋') st.天赋 = r.目标等级;
-        else if (r.项目 === '基建') st.基建 = r.目标等级;
-        else if (r.项目 === '能力值（信赖）') st.信赖 = r.目标等级;
-        else if (r.项目 === '技能1') st.技能1 = r.目标等级;
-        else if (r.项目 === '技能2') st.技能2 = r.目标等级;
-        else if (r.项目 === '技能3') st.技能3 = r.目标等级;
-        else if (r.项目 === '技能4') st.技能4 = r.目标等级;
-        setOwnedOp(r.干员, st);
-      }
-      if (ownedWps[r.干员]) {
-        const st = { ...ownedWps[r.干员] };
-        if (r.项目 === '等级') st.等级 = r.目标等级;
-        else if (r.项目 === '破限') st.破限阶段 = r.目标等级;
-        setOwnedWp(r.干员, st);
-      }
-      removeRow(r.id);
-    }
+    completeAllGoals(realCost as Stock);
   }
 
   return (
@@ -62,6 +36,7 @@ export function CostSummary() {
       style={{ position: 'sticky', top: '24px', alignSelf: 'start' }}
     >
       <CornerBrackets />
+
       {/* Section kicker */}
       <div>
         <div
@@ -102,11 +77,20 @@ export function CostSummary() {
         })}
       </div>
 
-      {/* Complete all button — full width at bottom */}
-      {hasPlans && Object.keys(missing).length === 0 && (
+      {/* Bulk complete — only visible when all materials are available */}
+      {hasGoals && Object.keys(missing).length === 0 && (
         <Button className="w-full mt-2" onClick={completeAll}>
           完成全部规划（扣减库存）
         </Button>
+      )}
+
+      {!hasGoals && (
+        <div
+          className="font-mono uppercase text-[#5a5a5a] text-center"
+          style={{ fontSize: '11px', letterSpacing: '1.5px' }}
+        >
+          暂无规划
+        </div>
       )}
     </div>
   );
