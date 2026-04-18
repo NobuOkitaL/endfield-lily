@@ -22,13 +22,13 @@ export function Nav() {
         <div className="flex items-baseline gap-2">
           <span
             className="font-sans text-signal"
-            style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '0.02em', lineHeight: '1' }}
+            style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '0.02em', lineHeight: '1' }}
           >
             总控核心
           </span>
           <span
             className="font-display text-white"
-            style={{ fontSize: '26px', lineHeight: '1', letterSpacing: '-0.02em' }}
+            style={{ fontSize: '18px', lineHeight: '1', letterSpacing: '-0.02em' }}
           >
             Lily
           </span>
