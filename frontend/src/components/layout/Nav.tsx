@@ -17,25 +17,25 @@ export function Nav() {
       className="flex flex-col gap-1 p-4 h-full w-56 shrink-0 bg-canvas border-r border-white/10"
       style={{ borderRight: '1px dashed rgba(255,255,255,0.15)' }}
     >
-      {/* Wordmark */}
+      {/* Wordmark — 总控核心 Lily */}
       <div className="mb-6 pt-2">
         <div
-          className="font-mono text-signal uppercase tracking-widest"
-          style={{ fontSize: '10px', letterSpacing: '1.8px' }}
+          className="font-sans text-white"
+          style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '0.02em', lineHeight: '1' }}
         >
           总控核心
         </div>
         <div
           className="font-display text-white"
-          style={{ fontSize: '40px', lineHeight: '0.90', letterSpacing: '-0.02em', marginTop: '4px' }}
+          style={{ fontSize: '44px', lineHeight: '0.90', letterSpacing: '-0.02em', marginTop: '-2px' }}
         >
           Lily
         </div>
         <div
-          className="font-mono text-white/30 uppercase mt-1"
-          style={{ fontSize: '9px', letterSpacing: '1.4px' }}
+          className="font-mono text-signal uppercase mt-2"
+          style={{ fontSize: '9px', letterSpacing: '1.6px' }}
         >
-          终末地规划器
+          CENTRAL CORE
         </div>
       </div>
 

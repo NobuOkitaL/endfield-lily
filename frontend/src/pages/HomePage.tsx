@@ -60,31 +60,50 @@ export default function HomePage() {
         <div className="relative z-10">
           {/* Top kicker: game identity */}
           <div
-            className="font-mono text-[#949494] uppercase"
+            className="font-mono text-[#949494] uppercase mb-5"
             style={{ fontSize: '12px', letterSpacing: '3px' }}
           >
             ARKNIGHTS: ENDFIELD
           </div>
 
-          {/* Secondary kicker: sub-brand — right above the massive title */}
-          <div
-            className="font-mono text-signal uppercase mt-2 mb-3"
-            style={{ fontSize: '11px', letterSpacing: '2.5px' }}
-          >
-            总控核心 · CENTRAL CORE
+          {/* Brand mark — two-line display composition: 总控核心 / Lily */}
+          <div className="relative">
+            {/* 总控核心 — large Chinese display (system CJK fallback) */}
+            <div
+              className="font-sans text-white"
+              style={{
+                fontSize: 'clamp(48px, 7vw, 92px)',
+                fontWeight: 700,
+                letterSpacing: '0.02em',
+                lineHeight: '1',
+              }}
+            >
+              总控核心
+            </div>
+            {/* Lily — Anton, sits tight under 总控核心 */}
+            <div
+              className="font-display text-white leading-none"
+              style={{
+                fontSize: 'clamp(96px, 14vw, 180px)',
+                letterSpacing: '-0.02em',
+                lineHeight: '0.88',
+                marginTop: '-4px',
+              }}
+            >
+              Lily
+            </div>
+            {/* Signal-yellow English kicker beside / below — "CENTRAL CORE" */}
+            <div
+              className="font-mono text-signal uppercase mt-3"
+              style={{ fontSize: '11px', letterSpacing: '2.5px' }}
+            >
+              CENTRAL CORE · 终末地前哨
+            </div>
           </div>
 
-          {/* Main title — Lily */}
+          {/* Subtitle */}
           <div
-            className="font-display text-white leading-none"
-            style={{ fontSize: 'clamp(72px, 12vw, 160px)', letterSpacing: '-0.02em', lineHeight: '0.88' }}
-          >
-            Lily
-          </div>
-
-          {/* Chinese subtitle */}
-          <div
-            className="font-sans text-[#949494] mt-4 tracking-wider"
+            className="font-sans text-[#949494] mt-6 tracking-wider"
             style={{ fontSize: '24px', fontWeight: 400 }}
           >
             终末地养成规划器
