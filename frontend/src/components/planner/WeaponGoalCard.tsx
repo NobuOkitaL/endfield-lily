@@ -5,6 +5,7 @@ import { computeWeaponGoalCost } from '@/logic/plan-aggregator';
 import { isAffordable } from '@/logic/stock';
 import { VIRTUAL_EXP_MATERIALS } from '@/data/materials';
 import type { MaterialName } from '@/data/materials';
+import { WEAPON_AVATARS } from '@/data/weapons';
 
 /** Build a one-line target summary: 破2 Lv.45 */
 function buildSummary(goal: WeaponGoal): string {
@@ -55,11 +56,12 @@ export function WeaponGoalCard({
       style={{ minHeight: '64px' }}
     >
       {/* Avatar */}
-      <div className="w-10 h-10 rounded-sm bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-        <span className="font-mono text-[9px] text-[#949494] uppercase leading-none text-center px-1">
-          {goal.weapon.slice(0, 2)}
-        </span>
-      </div>
+      <img
+        src={`/${WEAPON_AVATARS[goal.weapon]}`}
+        alt={goal.weapon}
+        className="w-10 h-10 rounded-sm shrink-0 object-cover border border-white/20"
+        loading="lazy"
+      />
 
       {/* Name + summary */}
       <div className="flex-1 min-w-0 py-3">

@@ -5,6 +5,7 @@ import { computeOperatorGoalCost } from '@/logic/plan-aggregator';
 import { isAffordable } from '@/logic/stock';
 import { VIRTUAL_EXP_MATERIALS } from '@/data/materials';
 import type { MaterialName } from '@/data/materials';
+import { OPERATOR_AVATARS } from '@/data/operators';
 
 /** Build a one-line target summary: 精3 Lv.60 · 装2 天3 · 技能 7/7/5/7 */
 function buildSummary(goal: OperatorGoal): string {
@@ -59,11 +60,12 @@ export function OperatorGoalCard({
       style={{ minHeight: '64px' }}
     >
       {/* Avatar */}
-      <div className="w-10 h-10 rounded-sm bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-        <span className="font-mono text-[9px] text-[#949494] uppercase leading-none text-center px-1">
-          {goal.operator.slice(0, 2)}
-        </span>
-      </div>
+      <img
+        src={`/${OPERATOR_AVATARS[goal.operator]}`}
+        alt={goal.operator}
+        className="w-10 h-10 rounded-sm shrink-0 object-cover border border-white/20"
+        loading="lazy"
+      />
 
       {/* Name + summary */}
       <div className="flex-1 min-w-0 py-3">

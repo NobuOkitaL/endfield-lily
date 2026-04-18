@@ -8,6 +8,7 @@ import { isAffordable } from '@/logic/stock';
 import type { Stock } from '@/logic/stock';
 import { MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS } from '@/data/materials';
 import type { MaterialName } from '@/data/materials';
+import { WEAPON_AVATARS } from '@/data/weapons';
 
 const FIELDS: {
   key: keyof WeaponState;
@@ -74,11 +75,12 @@ export function WeaponGoalDetailDialog({ goal, open, onOpenChange }: Props) {
         <DialogHeader>
           <div className="flex items-center gap-3">
             {/* Avatar */}
-            <div className="w-10 h-10 rounded-sm bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-              <span className="font-mono text-[9px] text-[#949494] uppercase leading-none text-center px-1">
-                {goal.weapon.slice(0, 2)}
-              </span>
-            </div>
+            <img
+              src={`/${WEAPON_AVATARS[goal.weapon]}`}
+              alt={goal.weapon}
+              className="w-10 h-10 rounded-sm shrink-0 object-cover border border-white/20"
+              loading="lazy"
+            />
             <div className="min-w-0">
               <div
                 className="font-mono uppercase text-signal mb-0.5"
