@@ -68,6 +68,7 @@ interface AppState {
   operatorGoals: OperatorGoal[];
   weaponGoals: WeaponGoal[];
   settings: Settings;
+  farmSelectedWeapons: string[];
 
   // --- Stock ---
   setStock: (name: MaterialName, count: number) => void;
@@ -100,6 +101,10 @@ interface AppState {
   /** Bulk: deduct aggregate stock and apply all visible goals atomically. */
   completeAllGoals: (aggregateCost: Stock) => void;
 
+  // --- Farm planner ---
+  toggleFarmWeapon: (weapon: string) => void;
+  clearFarmWeapons: () => void;
+
   // --- Legacy stubs (for backward-compat with old tests) ---
   planRows: PlanRow[];
   addPlanRow: (row: PlanRow) => void;
@@ -114,7 +119,7 @@ interface AppState {
 
 const INITIAL: Pick<
   AppState,
-  'stock' | 'ownedOperators' | 'ownedWeapons' | 'operatorGoals' | 'weaponGoals' | 'planRows' | 'settings'
+  'stock' | 'ownedOperators' | 'ownedWeapons' | 'operatorGoals' | 'weaponGoals' | 'planRows' | 'settings' | 'farmSelectedWeapons'
 > = {
   stock: {},
   ownedOperators: {},
@@ -123,6 +128,7 @@ const INITIAL: Pick<
   weaponGoals: [],
   planRows: [],
   settings: { darkMode: false },
+  farmSelectedWeapons: [],
 };
 
 export const useAppStore = create<AppState>()(
@@ -271,6 +277,15 @@ export const useAppStore = create<AppState>()(
       toggleDarkMode: () =>
         set((s) => ({ settings: { ...s.settings, darkMode: !s.settings.darkMode } })),
 
+      // --- Farm planner ---
+      toggleFarmWeapon: (weapon) =>
+        set((s) => ({
+          farmSelectedWeapons: s.farmSelectedWeapons.includes(weapon)
+            ? s.farmSelectedWeapons.filter((w) => w !== weapon)
+            : [...s.farmSelectedWeapons, weapon],
+        })),
+      clearFarmWeapons: () => set({ farmSelectedWeapons: [] }),
+
       exportSnapshot: () =>
         JSON.stringify(
           {
@@ -297,6 +312,6 @@ export const useAppStore = create<AppState>()(
         });
       },
     }),
-    { name: 'zmd-planner-state', version: 2 },
+    { name: 'zmd-planner-state', version: 3 },
   ),
 );
