@@ -91,7 +91,7 @@ node scripts/port-from-endwiki.mjs all
 ## 目录结构
 
 ```
-ZMD/
+endfield-lily/            # 仓库根（本地目录名历史原因仍是 ZMD/，不强求改）
 ├── frontend/              # Vite + React + TS 前端
 │   ├── src/
 │   │   ├── data/          # 自动 port 的游戏数据
