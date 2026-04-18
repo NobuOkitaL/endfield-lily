@@ -66,39 +66,37 @@ export default function HomePage() {
             ARKNIGHTS: ENDFIELD
           </div>
 
-          {/* Brand mark — two-line display composition: 总控核心 / Lily */}
-          <div className="relative">
-            {/* 总控核心 — large Chinese display (system CJK fallback) */}
-            <div
-              className="font-sans text-white"
+          {/* Brand mark — single line: 总控核心 (signal yellow) + Lily (white, smaller) */}
+          <div className="flex items-baseline gap-4 flex-wrap">
+            <span
+              className="font-sans text-signal"
               style={{
-                fontSize: 'clamp(48px, 7vw, 92px)',
+                fontSize: 'clamp(52px, 8vw, 108px)',
                 fontWeight: 700,
                 letterSpacing: '0.02em',
                 lineHeight: '1',
               }}
             >
               总控核心
-            </div>
-            {/* Lily — Anton, sits tight under 总控核心 */}
-            <div
-              className="font-display text-white leading-none"
+            </span>
+            <span
+              className="font-display text-white"
               style={{
-                fontSize: 'clamp(96px, 14vw, 180px)',
+                fontSize: 'clamp(44px, 6.5vw, 88px)',
                 letterSpacing: '-0.02em',
-                lineHeight: '0.88',
-                marginTop: '-4px',
+                lineHeight: '1',
               }}
             >
               Lily
-            </div>
-            {/* Signal-yellow English kicker beside / below — "CENTRAL CORE" */}
-            <div
-              className="font-mono text-signal uppercase mt-3"
-              style={{ fontSize: '11px', letterSpacing: '2.5px' }}
-            >
-              CENTRAL CORE · 终末地前哨
-            </div>
+            </span>
+          </div>
+
+          {/* English kicker */}
+          <div
+            className="font-mono text-[#5a5a5a] uppercase mt-4"
+            style={{ fontSize: '11px', letterSpacing: '2.5px' }}
+          >
+            CENTRAL CORE · 终末地前哨
           </div>
 
           {/* Subtitle */}
