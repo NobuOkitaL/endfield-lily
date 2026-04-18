@@ -53,38 +53,58 @@ export default function HomePage() {
           }}
           aria-hidden="true"
         >
-          {'終末地規劃系統 // ARKNIGHTS:ENDFIELD // OPERATOR DATA TERMINAL // ZMD v1.2.4 // LIVE BUILD //'.repeat(2)}
+          {'总控核心 LILY // ARKNIGHTS:ENDFIELD // OPERATOR DATA TERMINAL // TALOS II UPLINK // LIVE BUILD //'.repeat(2)}
         </div>
 
         {/* Hero content */}
         <div className="relative z-10">
-          {/* Subtitle kicker */}
+          {/* Top kicker: game identity */}
           <div
-            className="font-sans text-[#949494] uppercase mb-4"
+            className="font-mono text-[#949494] uppercase"
             style={{ fontSize: '12px', letterSpacing: '3px' }}
           >
             ARKNIGHTS: ENDFIELD
           </div>
 
-          {/* Main title */}
+          {/* Secondary kicker: sub-brand — right above the massive title */}
+          <div
+            className="font-mono text-signal uppercase mt-2 mb-3"
+            style={{ fontSize: '11px', letterSpacing: '2.5px' }}
+          >
+            总控核心 · CENTRAL CORE
+          </div>
+
+          {/* Main title — Lily */}
           <div
             className="font-display text-white leading-none"
             style={{ fontSize: 'clamp(72px, 12vw, 160px)', letterSpacing: '-0.02em', lineHeight: '0.88' }}
           >
-            ZMD
+            Lily
           </div>
 
-          {/* Chinese subtitle in ZCOOL XiaoWei */}
+          {/* Chinese subtitle */}
           <div
-            className="font-display text-[#949494] mt-3 tracking-wider"
-            style={{ fontSize: '24px', fontFamily: "'ZCOOL XiaoWei', serif", fontWeight: 400 }}
+            className="font-sans text-[#949494] mt-4 tracking-wider"
+            style={{ fontSize: '24px', fontWeight: 400 }}
           >
             终末地养成规划器
           </div>
 
-          <p className="text-[#5a5a5a] mt-5 font-sans text-sm max-w-sm leading-relaxed">
-            管理你的干员、武器与养成规划。所有数据储存在浏览器本地。
-          </p>
+          {/* Tagline — bilingual, stacked */}
+          <div className="mt-6">
+            <div
+              className="font-sans text-white tracking-wider"
+              style={{ fontSize: '16px', fontWeight: 300 }}
+            >
+              从泰拉到塔卫二
+            </div>
+            <div
+              className="font-mono text-[#5a5a5a] uppercase mt-1"
+              style={{ fontSize: '10px', letterSpacing: '2px' }}
+            >
+              FROM TERRA TO TALOS II
+            </div>
+          </div>
         </div>
 
         {/* Bottom-left version kicker */}
@@ -93,16 +113,16 @@ export default function HomePage() {
           style={{ fontSize: '10px', letterSpacing: '1.5px' }}
           aria-hidden="true"
         >
-          V1.2.4 / LIVE BUILD
+          LILY OS · V1.2.4
         </div>
 
-        {/* Bottom-right timestamp */}
+        {/* Bottom-right status */}
         <div
           className="absolute bottom-6 right-8 font-mono text-white/20"
           style={{ fontSize: '10px', letterSpacing: '1px' }}
           aria-hidden="true"
         >
-          TERMINAL:ACTIVE
+          TALOS II UPLINK · ACTIVE
         </div>
       </div>
 

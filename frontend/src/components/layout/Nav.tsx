@@ -23,13 +23,19 @@ export function Nav() {
           className="font-mono text-signal uppercase tracking-widest"
           style={{ fontSize: '10px', letterSpacing: '1.8px' }}
         >
-          终末地规划器
+          总控核心
         </div>
         <div
           className="font-display text-white"
           style={{ fontSize: '40px', lineHeight: '0.90', letterSpacing: '-0.02em', marginTop: '4px' }}
         >
-          ZMD
+          Lily
+        </div>
+        <div
+          className="font-mono text-white/30 uppercase mt-1"
+          style={{ fontSize: '9px', letterSpacing: '1.4px' }}
+        >
+          终末地规划器
         </div>
       </div>
 
