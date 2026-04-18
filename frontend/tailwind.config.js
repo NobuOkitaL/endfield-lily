@@ -12,9 +12,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ['Anton', 'Archivo Black', 'Impact', 'sans-serif'],
-        sans: ['Hanken Grotesk', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+        display: ['Anton', 'ZCOOL XiaoWei', 'Archivo Black', 'Impact', 'sans-serif'],
+        sans: ['Hanken Grotesk', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Noto Sans SC', 'ui-monospace', 'monospace'],
       },
       colors: {
         border: 'hsl(var(--border))',
@@ -50,14 +50,18 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        /* Verge custom palette */
-        mint: '#3cffd0',
-        ultraviolet: '#5200ff',
-        'link-hover': '#3860be',
-        canvas: '#131313',
-        'slate-surface': '#2d2d2d',
+        /* Endfield custom palette */
+        signal: '#f5e000',       /* primary CTA — signal yellow */
+        military: '#8fd5b0',     /* secondary accent — military mint */
+        alert: '#ff4a3d',        /* destructive / warning red */
+        'link-hover': '#8fd5b0', /* hover links — military mint */
+        canvas: '#0a0a0a',       /* near-black canvas */
+        'slate-surface': '#1a1a1a', /* surface-2 */
         'focus-cyan': '#1eaedb',
-        'console-mint': '#309875',
+        'console-green': '#309875',
+        /* Legacy aliases kept for smooth transition */
+        mint: '#f5e000',         /* remapped to signal yellow */
+        ultraviolet: '#ff4a3d',  /* remapped to alert red */
       },
       borderRadius: {
         lg: 'var(--radius)',

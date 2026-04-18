@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
 const STAR_UNDERLINE: Record<number, string> = {
-  6: '2px solid #3cffd0',
-  5: '1px solid rgba(60,255,208,0.5)',
+  6: '2px solid #f5e000',
+  5: '1px solid rgba(143,213,176,0.6)',
   4: '1px solid rgba(255,255,255,0.3)',
   3: '1px solid rgba(255,255,255,0.15)',
 };
@@ -64,7 +64,7 @@ export function WeaponGrid() {
                   className={[
                     'border border-white/20 rounded-card p-4 bg-canvas',
                     'flex items-center justify-between gap-3',
-                    has ? 'border-l-4 border-l-mint' : '',
+                    has ? 'border-l-4 border-l-signal' : '',
                   ].join(' ')}
                 >
                   <img

@@ -15,7 +15,7 @@ const WP_PROJECTS: PlanProject[] = ['等级', '破限'];
 const selectClass = [
   'w-full rounded-form px-2 py-1.5 font-sans text-[15px] text-white',
   'bg-canvas border border-white/30',
-  'focus:outline-none focus:border-mint transition-colors duration-150',
+  'focus:outline-none focus:border-signal transition-colors duration-150',
 ].join(' ');
 
 export function AddPlanRowDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {

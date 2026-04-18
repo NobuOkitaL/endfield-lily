@@ -64,7 +64,7 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
       {result.items.length > 0 && (
         <div className="space-y-3">
           <div
-            className="font-mono uppercase text-mint"
+            className="font-mono uppercase text-signal"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             RECOGNIZED ITEMS / 识别结果
@@ -92,7 +92,7 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
                       [item.material_id]: Number(e.target.value),
                     }))
                   }
-                  className="w-20 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-mint"
+                  className="w-20 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-signal"
                 />
               </div>
             ))}
@@ -104,12 +104,12 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
       {result.unknowns.length > 0 && (
         <div className="space-y-3">
           <div
-            className="font-mono uppercase text-ultraviolet"
+            className="font-mono uppercase text-alert"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             UNRECOGNIZED / 未识别
           </div>
-          <div className="border border-ultraviolet/40 rounded-card p-4 space-y-3">
+          <div className="border border-alert/40 rounded-card p-4 space-y-3">
             {result.unknowns.map((u, i) => (
               <div key={i} className="flex items-center gap-4">
                 {u.icon_thumbnail_base64 && (
@@ -127,7 +127,7 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
                       [i]: e.target.value as MaterialName,
                     }))
                   }
-                  className="flex-1 bg-[#1e1e1e] border border-white/20 rounded-sm px-2 py-1 font-sans text-white text-sm focus:outline-none focus:border-mint"
+                  className="flex-1 bg-[#1e1e1e] border border-white/20 rounded-sm px-2 py-1 font-sans text-white text-sm focus:outline-none focus:border-signal"
                 >
                   {MATERIAL_COLUMNS.map((name) => (
                     <option key={name} value={name}>
@@ -145,7 +145,7 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
                       [i]: Number(e.target.value),
                     }))
                   }
-                  className="w-20 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-mint"
+                  className="w-20 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-signal"
                 />
               </div>
             ))}

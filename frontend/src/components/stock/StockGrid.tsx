@@ -34,7 +34,7 @@ export function StockGrid() {
             return (
               <div
                 key={name}
-                className="border border-white/20 rounded-card p-3 bg-canvas border-l-2 border-l-mint"
+                className="border border-white/20 rounded-card p-3 bg-canvas border-l-2 border-l-signal"
               >
                 <div className="flex items-center gap-2 mb-1">
                   <img src={iconSrc} alt={name} className="w-8 h-8 rounded-sm shrink-0" loading="lazy" />
@@ -46,7 +46,7 @@ export function StockGrid() {
                 >
                   计算值
                 </div>
-                <div className="font-mono text-mint mt-1.5" style={{ fontSize: '18px' }}>
+                <div className="font-mono text-signal mt-1.5" style={{ fontSize: '18px' }}>
                   {val.toLocaleString()}
                 </div>
               </div>

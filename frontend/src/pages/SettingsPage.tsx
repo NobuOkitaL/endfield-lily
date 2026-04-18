@@ -41,7 +41,7 @@ export default function SettingsPage() {
       {/* Page header */}
       <div>
         <div
-          className="font-mono uppercase text-mint"
+          className="font-mono uppercase text-signal"
           style={{ fontSize: '11px', letterSpacing: '1.8px' }}
         >
           SETTINGS / 设置
@@ -58,7 +58,7 @@ export default function SettingsPage() {
       <section className="space-y-4">
         <div>
           <div
-            className="font-mono uppercase text-mint mb-1"
+            className="font-mono uppercase text-signal mb-1"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             BACKUP & RESTORE
@@ -86,7 +86,7 @@ export default function SettingsPage() {
         </div>
         {msg && (
           <div
-            className="font-mono uppercase text-mint"
+            className="font-mono uppercase text-signal"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             {msg}

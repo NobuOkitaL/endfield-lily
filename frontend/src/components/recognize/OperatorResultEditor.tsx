@@ -59,7 +59,7 @@ export function OperatorResultEditor({ result, onApplied }: OperatorResultEditor
       {result.items.length > 0 && (
         <div className="space-y-3">
           <div
-            className="font-mono uppercase text-mint"
+            className="font-mono uppercase text-signal"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             RECOGNIZED OPERATORS / 识别结果
@@ -79,7 +79,7 @@ export function OperatorResultEditor({ result, onApplied }: OperatorResultEditor
                 <select
                   value={entry.name}
                   onChange={(e) => setEntryName(i, e.target.value)}
-                  className="flex-1 bg-[#1e1e1e] border border-white/20 rounded-sm px-2 py-1 font-sans text-white text-sm focus:outline-none focus:border-mint"
+                  className="flex-1 bg-[#1e1e1e] border border-white/20 rounded-sm px-2 py-1 font-sans text-white text-sm focus:outline-none focus:border-signal"
                 >
                   {CHARACTER_LIST.map((name) => (
                     <option key={name} value={name}>
@@ -94,7 +94,7 @@ export function OperatorResultEditor({ result, onApplied }: OperatorResultEditor
                   max={90}
                   value={entry.level}
                   onChange={(e) => setEntryLevel(i, Number(e.target.value))}
-                  className="w-16 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-mint"
+                  className="w-16 bg-transparent border border-white/20 rounded-sm px-2 py-1 text-right font-mono text-white text-sm focus:outline-none focus:border-signal"
                 />
               </div>
             ))}
@@ -106,12 +106,12 @@ export function OperatorResultEditor({ result, onApplied }: OperatorResultEditor
       {result.unknowns.length > 0 && (
         <div className="space-y-3">
           <div
-            className="font-mono uppercase text-ultraviolet"
+            className="font-mono uppercase text-alert"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             UNRECOGNIZED / 未识别 ({result.unknowns.length})
           </div>
-          <div className="border border-ultraviolet/40 rounded-card p-4 space-y-2">
+          <div className="border border-alert/40 rounded-card p-4 space-y-2">
             {result.unknowns.map((u, i) => (
               <div key={i} className="flex items-center gap-4">
                 {u.icon_thumbnail_base64 && (

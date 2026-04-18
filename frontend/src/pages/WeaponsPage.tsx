@@ -7,7 +7,7 @@ export default function WeaponsPage() {
       {/* Header */}
       <div>
         <div
-          className="font-mono uppercase text-mint"
+          className="font-mono uppercase text-signal"
           style={{ fontSize: '11px', letterSpacing: '1.8px' }}
         >
           WEAPONS / 武器管理

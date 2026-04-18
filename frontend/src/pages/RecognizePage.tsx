@@ -64,7 +64,7 @@ export default function RecognizePage() {
       {/* Page header */}
       <div>
         <div
-          className="font-mono uppercase text-mint"
+          className="font-mono uppercase text-signal"
           style={{ fontSize: '11px', letterSpacing: '1.8px' }}
         >
           SCREENSHOT RECOGNITION / 截图识别
@@ -79,9 +79,9 @@ export default function RecognizePage() {
 
       {/* Backend health banner */}
       {backendOk === false && (
-        <div className="border border-ultraviolet/60 rounded-card p-6 space-y-3">
+        <div className="border border-alert/60 rounded-card p-6 space-y-3">
           <div
-            className="font-mono uppercase text-ultraviolet"
+            className="font-mono uppercase text-alert"
             style={{ fontSize: '11px', letterSpacing: '1.8px' }}
           >
             BACKEND OFFLINE / 后端未启动
@@ -103,7 +103,7 @@ export default function RecognizePage() {
         <section className="space-y-4">
           <div>
             <div
-              className="font-mono uppercase text-mint mb-1"
+              className="font-mono uppercase text-signal mb-1"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               MATERIAL INVENTORY / 库存截图
@@ -125,7 +125,7 @@ export default function RecognizePage() {
 
           {invBusy && (
             <div
-              className="font-mono uppercase text-mint"
+              className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               PROCESSING...
@@ -134,7 +134,7 @@ export default function RecognizePage() {
 
           {invError && (
             <div
-              className="font-mono uppercase text-ultraviolet"
+              className="font-mono uppercase text-alert"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               {invError}
@@ -143,7 +143,7 @@ export default function RecognizePage() {
 
           {invMsg && (
             <div
-              className="font-mono uppercase text-mint"
+              className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               {invMsg}
@@ -178,7 +178,7 @@ export default function RecognizePage() {
         <section className="space-y-4">
           <div>
             <div
-              className="font-mono uppercase text-mint mb-1"
+              className="font-mono uppercase text-signal mb-1"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               OPERATOR LIST / 干员列表截图
@@ -200,7 +200,7 @@ export default function RecognizePage() {
 
           {opBusy && (
             <div
-              className="font-mono uppercase text-mint"
+              className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               PROCESSING...
@@ -209,7 +209,7 @@ export default function RecognizePage() {
 
           {opError && (
             <div
-              className="font-mono uppercase text-ultraviolet"
+              className="font-mono uppercase text-alert"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               {opError}
@@ -218,7 +218,7 @@ export default function RecognizePage() {
 
           {opMsg && (
             <div
-              className="font-mono uppercase text-mint"
+              className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               {opMsg}

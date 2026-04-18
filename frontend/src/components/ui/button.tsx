@@ -18,11 +18,11 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Jelly Mint Pill — primary CTA
+        // Signal Yellow Pill — primary CTA
         default: [
-          "bg-mint text-black font-mono uppercase",
+          "bg-signal text-black font-mono uppercase",
           "rounded-pill px-6 py-2.5",
-          "hover:bg-white/20 hover:text-black hover:outline hover:outline-1 hover:outline-[#c2c2c2]",
+          "hover:bg-white/20 hover:text-white hover:outline hover:outline-1 hover:outline-[#c2c2c2]",
           "active:bg-[rgba(140,140,140,0.87)] active:opacity-50",
         ].join(" "),
 
@@ -30,28 +30,28 @@ const buttonVariants = cva(
         secondary: [
           "bg-slate-surface text-[#e9e9e9] font-sans text-sm",
           "rounded-pill px-6 py-2.5",
-          "hover:bg-white/20 hover:text-black hover:outline hover:outline-1 hover:outline-[#c2c2c2]",
+          "hover:bg-white/20 hover:text-white hover:outline hover:outline-1 hover:outline-[#c2c2c2]",
         ].join(" "),
 
-        // Outlined Mint — tertiary outline CTA
+        // Outlined Signal — tertiary outline CTA
         outline: [
-          "bg-transparent text-mint font-mono uppercase",
-          "border border-mint rounded-outline-cta px-5 py-2.5",
-          "hover:bg-mint hover:text-black",
+          "bg-transparent text-signal font-mono uppercase",
+          "border border-signal rounded-outline-cta px-5 py-2.5",
+          "hover:bg-signal hover:text-black",
         ].join(" "),
 
-        // Ghost — text-only, hover to link blue
+        // Ghost — text-only, hover to military mint
         ghost: [
           "bg-transparent text-white",
           "rounded-pill px-3 py-2",
-          "hover:text-link-hover",
+          "hover:text-military",
         ].join(" "),
 
-        // Outlined Ultraviolet — destructive / promotional
+        // Outlined Alert Red — destructive / warning
         destructive: [
-          "bg-transparent text-ultraviolet font-mono uppercase",
-          "border border-ultraviolet rounded-cta px-5 py-2.5",
-          "hover:bg-ultraviolet hover:text-white",
+          "bg-transparent text-alert font-mono uppercase",
+          "border border-alert rounded-cta px-5 py-2.5",
+          "hover:bg-alert hover:text-white",
         ].join(" "),
 
         // Link variant

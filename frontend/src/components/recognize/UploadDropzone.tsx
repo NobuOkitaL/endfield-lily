@@ -38,7 +38,7 @@ export function UploadDropzone({ onFile, label }: UploadDropzoneProps) {
       className={cn(
         'block border-2 border-dashed rounded-card p-12 text-center cursor-pointer transition-colors duration-150',
         dragging
-          ? 'border-mint bg-mint/5'
+          ? 'border-signal bg-signal/5'
           : 'border-white/20 hover:border-white/40',
       )}
       onDragOver={handleDragOver}
@@ -54,7 +54,7 @@ export function UploadDropzone({ onFile, label }: UploadDropzoneProps) {
       />
       <div className="space-y-2">
         <div
-          className="font-mono uppercase text-mint"
+          className="font-mono uppercase text-signal"
           style={{ fontSize: '11px', letterSpacing: '1.8px' }}
         >
           DRAG &amp; DROP / 点击上传

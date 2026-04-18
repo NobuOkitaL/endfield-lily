@@ -25,7 +25,7 @@ export function PlanRowList() {
           key={r.id}
           className={[
             'border border-white/20 rounded-card p-5 bg-canvas',
-            'border-l-4 border-l-mint',
+            'border-l-4 border-l-signal',
             'flex items-center justify-between gap-4',
             r.hidden ? 'opacity-50' : '',
           ].join(' ')}
@@ -33,7 +33,7 @@ export function PlanRowList() {
           <div className="flex-1 min-w-0">
             {/* Mono kicker: project type */}
             <div
-              className="font-mono uppercase text-mint mb-1"
+              className="font-mono uppercase text-signal mb-1"
               style={{ fontSize: '11px', letterSpacing: '1.5px' }}
             >
               {r.项目}

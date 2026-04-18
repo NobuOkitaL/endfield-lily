@@ -12,8 +12,8 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           "flex h-10 w-full bg-canvas border border-white/30 rounded-form",
           "px-3 py-2 font-sans text-[15px] text-white",
           "placeholder:text-[#949494]",
-          // Focus: border shifts to mint, no ring glow
-          "focus:outline-none focus:border-mint transition-colors duration-150",
+          // Focus: border shifts to signal yellow, no ring glow
+          "focus:outline-none focus:border-signal transition-colors duration-150",
           "disabled:cursor-not-allowed disabled:opacity-50",
           "file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
           className

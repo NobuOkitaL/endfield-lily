@@ -14,7 +14,7 @@ export default function PlannerPage() {
         <div className="flex justify-between items-center mb-2">
           <div>
             <div
-              className="font-mono uppercase text-mint"
+              className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
               PLANNER / 养成规划

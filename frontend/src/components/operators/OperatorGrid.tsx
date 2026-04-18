@@ -32,8 +32,8 @@ export function OperatorGrid() {
               className={[
                 'border border-white/20 rounded-card p-4 bg-canvas',
                 'flex items-center justify-between gap-3',
-                // Owned: mint left rail
-                has ? 'border-l-4 border-l-mint' : '',
+                // Owned: signal yellow left rail
+                has ? 'border-l-4 border-l-signal' : '',
               ].join(' ')}
             >
               <img

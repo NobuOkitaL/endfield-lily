@@ -20,7 +20,7 @@ export function Nav() {
       {/* Wordmark */}
       <div className="mb-6 pt-2">
         <div
-          className="font-mono text-mint uppercase tracking-widest"
+          className="font-mono text-signal uppercase tracking-widest"
           style={{ fontSize: '10px', letterSpacing: '1.8px' }}
         >
           终末地规划器
@@ -45,9 +45,9 @@ export function Nav() {
           className={({ isActive }) =>
             cn(
               'px-3 py-2 rounded-tag font-mono uppercase transition-colors duration-150',
-              'hover:text-link-hover',
+              'hover:text-military',
               isActive
-                ? 'text-white border-b border-mint'
+                ? 'text-signal border-b border-signal'
                 : 'text-white/70',
             )
           }

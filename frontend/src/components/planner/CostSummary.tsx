@@ -4,6 +4,7 @@ import { computeAllPlanCost } from '@/logic/plan-aggregator';
 import { diffStock, deductStock } from '@/logic/stock';
 import { Button } from '@/components/ui/button';
 import { MATERIAL_COLUMNS, MATERIAL_ICONS, VIRTUAL_EXP_MATERIALS, type MaterialName } from '@/data/materials';
+import { CornerBrackets } from '@/components/decor/CornerBrackets';
 
 export function CostSummary() {
   const stock = useAppStore((s) => s.stock);
@@ -57,13 +58,14 @@ export function CostSummary() {
 
   return (
     <div
-      className="rounded-feature p-6 bg-canvas border border-mint flex flex-col gap-4"
+      className="relative rounded-feature p-6 bg-canvas/90 backdrop-blur-sm border border-signal/40 flex flex-col gap-4"
       style={{ position: 'sticky', top: '24px', alignSelf: 'start' }}
     >
+      <CornerBrackets />
       {/* Section kicker */}
       <div>
         <div
-          className="font-mono uppercase text-mint mb-1"
+          className="font-mono uppercase text-signal mb-1"
           style={{ fontSize: '11px', letterSpacing: '1.8px' }}
         >
           COST SUMMARY
@@ -89,7 +91,7 @@ export function CostSummary() {
               />
               <div className="font-sans text-[13px] text-[#e9e9e9] flex-1 truncate">{m}</div>
               <div
-                className={`text-right font-mono text-[13px] ${short ? 'text-ultraviolet font-bold' : 'text-white'}`}
+                className={`text-right font-mono text-[13px] ${short ? 'text-alert font-bold' : 'text-white'}`}
               >
                 {isExp
                   ? need.toLocaleString()
