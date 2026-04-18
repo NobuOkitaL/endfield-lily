@@ -4,11 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-本地复刻 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的《明日方舟：终末地》养成规划器。v1（已完成）是 React + TS 前端；v2（Plan B，未实现）计划加 Python 后端做截图识别。
+《明日方舟：终末地》养成规划器。React + TS 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）做截图识别。**数据主源是 [end.wiki](https://end.wiki)**（2026-04-17 从原始 zmdgraph 迁移）。
 
 - **Spec**：`docs/superpowers/specs/2026-04-17-zmd-planner-design.md`
 - **Plan A**（前端规划器，已交付 17/17）：`docs/superpowers/plans/2026-04-17-plan-a-planner-frontend.md`
-- **Plan B**（后端 + 截图识别，未开始）：`docs/superpowers/plans/2026-04-17-plan-b-recognition-backend.md`
+- **Plan B**（后端 + 截图识别，已交付 12/12）：`docs/superpowers/plans/2026-04-17-plan-b-recognition-backend.md`
+- **数据源审计**：`docs/research/2026-04-17-data-source-audit.md`（含迁移记录）
+
+### Backend quick ref
+
+- Work dir: `backend/`. Activate venv: `source backend/.venv/bin/activate`.
+- Dev server: `uvicorn app.main:app --port 8000 --reload`
+- Tests: `pytest` (39 tests across pipeline modules + endpoint integration)
+- One-command launch both: `./start.sh` at repo root
+
+OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; this is the documented fallback). Tiered OCR confidence: ≥0.8 trust, 0.5–0.8 trust only if parses cleanly, <0.5 unknown.
 
 ## Commands
 
@@ -48,7 +58,7 @@ Real counts baked into tests (actual numbers trust the generated data): **39 mat
 
 ### DATABASE is a flat cost table, not a typed cost tree
 
-The core cost data is a flat array of rows `{干员, 升级项目, 现等级, 目标等级, ...sparse material fields}`. Material fields are sparse — only non-zero materials appear as keys on a row. `cost-calc.ts` (`calculateProjectMaterials`) implements the zmdgraph lookup algorithm:
+The core cost data is a flat array of rows `{干员, 升级项目, 现等级, 目标等级, ...sparse material fields}`. Material fields are sparse — only non-zero materials appear as keys on a row. `cost-calc.ts` (`calculateProjectMaterials`) implements a three-tier lookup algorithm:
 
 1. Try **operator-specific exact match** (same 干员 + 项目 + 现等级 + 目标等级).
 2. Fall back to **generic exact match** (`干员 === ""`).
