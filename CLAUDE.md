@@ -33,17 +33,18 @@ Design spec lives in `docs/design/theverge.md`. Project spec + plans under `docs
 
 ### Data layer is source-of-truth, auto-generated
 
-The four files under `frontend/src/data/` (`materials.ts`, `operators.ts`, `weapons.ts`, `database.ts`) are **auto-generated** from `reference/zmdgraph/js/data.js` and `weaponAdd.js` by `frontend/scripts/port-data.mjs`. Do not hand-edit them. To refresh after upstream changes:
+The four files under `frontend/src/data/` (`materials.ts`, `operators.ts`, `weapons.ts`, `database.ts`) are **auto-generated** from [end.wiki](https://end.wiki) (the primary data source) by `frontend/scripts/port-from-endwiki.mjs`. Do not hand-edit them. To refresh after upstream changes:
 
 ```bash
-cd reference/zmdgraph && git pull
-cd ../../frontend
-node scripts/port-data.mjs materials    # or: operators | weapons | database
+cd frontend
+node scripts/port-from-endwiki.mjs all
 ```
 
-`operators-helpers.ts` and `types.ts` are hand-written. Generated files carry a `// Auto-generated ... do not edit by hand.` banner.
+HTTP responses are cached in `frontend/.endwiki-cache/` (gitignored). `operators-helpers.ts` and `types.ts` are hand-written. Generated files carry a `// Auto-generated ... do not edit by hand.` banner.
 
-Real counts baked into tests (exploration reports were wrong, actual numbers trust the generated data): **39 materials** (incl. 3 virtual EXP — `作战记录经验值`, `认知载体经验值`, `武器经验值` — never stored in stock, computed from EXP cards), **25 operators**, **66 weapons**, **481 DATABASE rows**.
+The legacy `frontend/scripts/port-data.mjs` (which ported from `reference/zmdgraph`) is kept as a read-only reference and is safe to delete after 2026-05-17.
+
+Real counts baked into tests (actual numbers trust the generated data): **39 materials** (incl. 3 virtual EXP — `作战记录经验值`, `认知载体经验值`, `武器经验值` — never stored in stock, computed from EXP cards), **26 operators**, **68 weapons**, **486 DATABASE rows**.
 
 ### DATABASE is a flat cost table, not a typed cost tree
 
@@ -84,7 +85,7 @@ Button positioning convention across the app:
 
 ### Tests
 
-Co-located `*.test.ts` with the code they cover. Vitest + jsdom. Tests that touch the store call `useAppStore.setState(useAppStore.getInitialState())` in `beforeEach` and `localStorage.clear()`. Data-layer tests assert counts (39 materials, 25 operators, 66 weapons, etc.) — if those assertions fail after a data re-port, **update the test** to match the new generated reality rather than reverting the port.
+Co-located `*.test.ts` with the code they cover. Vitest + jsdom. Tests that touch the store call `useAppStore.setState(useAppStore.getInitialState())` in `beforeEach` and `localStorage.clear()`. Data-layer tests assert counts (39 materials, 26 operators, 68 weapons, etc.) — if those assertions fail after a data re-port, **update the test** to match the new generated reality rather than reverting the port.
 
 ## Workflow norms
 

@@ -1,5 +1,7 @@
 # 终末地数据源审计（2026-04-17）
 
+> **Update (2026-04-17 later)**: Following user decision, migrated to end.wiki as single primary data source. See `scripts/port-from-endwiki.mjs` and commit history. This original audit is preserved for context.
+
 关闭两个 backlog task：
 - **#5** ：搜索终末地 datamine repo
 - **#36**：end.wiki 数据源核对

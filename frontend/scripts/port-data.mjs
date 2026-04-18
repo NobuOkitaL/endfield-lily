@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// DEPRECATED: this script ported data from zmdgraph. Replaced by
+// port-from-endwiki.mjs which pulls from end.wiki as the primary data source.
+// Kept temporarily for reference; safe to delete after 2026-05-17.
+
 // frontend/scripts/port-data.mjs
 // Data porting script: extracts constants from reference/zmdgraph/js/data.js
 // and writes typed TS files to frontend/src/data/.

@@ -1,6 +1,6 @@
 # ZMD — 终末地养成规划器（本地版）
 
-本地复刻 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的《明日方舟：终末地》养成规划器，React + TypeScript 重写，数据从 zmdgraph 的 `data.js` 通过脚本自动 port。
+本地复刻 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的《明日方舟：终末地》养成规划器，React + TypeScript 重写，数据从 [end.wiki](https://end.wiki) 通过脚本自动 port。
 
 **v1**：前端规划器已完整可用。**v2**：Python 后端截图识别（库存页 / 干员列表页 → 自动回填）。
 
@@ -36,8 +36,8 @@ uvicorn app.main:app --reload --port 8000
 ### v1（规划器）
 
 - **库存**：39 种材料，手动输入持有量；3 种 EXP 虚拟材料由卡片数量自动换算
-- **干员**：25 位干员，每位 10 个成长维度（精英阶段、等级、装备适配、天赋、基建、信赖、4 个技能）
-- **武器**：66 把武器，按 3-6 星分组，2 个成长维度（破限阶段、等级）
+- **干员**：26 位干员，每位 10 个成长维度（精英阶段、等级、装备适配、天赋、基建、信赖、4 个技能）
+- **武器**：68 把武器，按 3-6 星分组，2 个成长维度（破限阶段、等级）
 - **规划**：增删规划行，实时聚合消耗，和库存对比显示缺料；全部覆盖时一键完成（扣库存 + 回写已持有状态）
 - **备份**：导出/导入 JSON（跨浏览器迁移用）
 - **深色模式**
@@ -65,20 +65,16 @@ cd backend && source .venv/bin/activate && pytest -v
 
 ## 数据更新
 
-所有游戏数据（`src/data/materials.ts` / `operators.ts` / `weapons.ts` / `database.ts`）由 `scripts/port-data.mjs` 从 `reference/zmdgraph/` 自动生成。
+所有游戏数据（`src/data/materials.ts` / `operators.ts` / `weapons.ts` / `database.ts`）由 `scripts/port-from-endwiki.mjs` 从 [end.wiki](https://end.wiki) 自动抓取生成。HTTP 响应缓存在 `frontend/.endwiki-cache/`（gitignored）。
 
 要同步上游更新：
 
 ```bash
-cd reference/zmdgraph && git pull
-cd ../../frontend
-node scripts/port-data.mjs materials
-node scripts/port-data.mjs operators
-node scripts/port-data.mjs weapons
-node scripts/port-data.mjs database
+cd frontend
+node scripts/port-from-endwiki.mjs all
 ```
 
-生成的文件会被 git diff 标记，人工审核后再 commit。
+图片素材（干员头像、武器图标）从 `cdn.end.wiki` 下载 WebP 后转换为 PNG，存放在 `frontend/public/images/`。生成的文件会被 git diff 标记，人工审核后再 commit。
 
 ## 技术栈
 
@@ -97,18 +93,18 @@ ZMD/
 │   │   ├── store/         # Zustand + localStorage persist
 │   │   ├── components/    # UI 组件（按模块分）
 │   │   └── pages/         # 6 个页面
-│   └── scripts/
-│       └── port-data.mjs  # 数据 port 脚本
+│   ├── scripts/
+│   │   └── port-from-endwiki.mjs  # 数据 port 脚本（主）
+│   └── .endwiki-cache/    # HTTP 缓存（gitignored）
 ├── backend/               # Python FastAPI 识别后端
 │   ├── app/               # FastAPI 入口 + 路由 + pipeline
 │   └── tests/             # pytest 单测
 ├── reference/             # 上游参考（gitignored）
-│   └── zmdgraph/          # 数据源 + 图标素材（images/）
+│   └── zmdgraph/          # 历史参考数据源
 └── docs/superpowers/      # spec 和 plan
 ```
 
 ## 致谢
 
-- 游戏数据 / 计算逻辑：[CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph)（MIT）
-- 图标素材：`reference/zmdgraph/images/`（来自上游仓库，非 MaaEnd）
-- 社区 wiki（未来数据源候选）：[end.wiki](https://end.wiki/zh-Hans/strategies/)
+- 游戏数据 / 图片素材：[end.wiki](https://end.wiki/zh-Hans/)（主要数据源；图片从 `cdn.end.wiki` 下载 WebP 转 PNG）
+- 初始灵感 / 计算逻辑参考：[CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph)（MIT）
