@@ -162,7 +162,7 @@ export default function HomePage() {
           style={{ fontSize: '10px', letterSpacing: '1.5px' }}
           aria-hidden="true"
         >
-          LILY OS · V1.2.4
+          总控核心 · V1.2.4
         </div>
 
         {/* Bottom-right status */}
