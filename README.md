@@ -8,8 +8,6 @@
 
 **技术栈**：React 19 + TypeScript 6 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）。游戏数据从 [end.wiki](https://end.wiki) 通过脚本自动抓取生成。
 
-> **注**：仓库内部代码标识符保留 `ZMD` 缩写（本地目录名、localStorage key、workspace 等），仅用户可见的品牌面是 "总控核心 Lily"。
-
 ## 启动
 
 前置依赖：
