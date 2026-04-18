@@ -30,11 +30,8 @@ export function computeOperatorGoalCost(goal: OperatorGoal, current: OperatorSta
     if (c) acc = addCost(acc, c);
   }
 
-  // 天赋
-  for (let s = current.天赋 + 1; s <= goal.target.天赋; s++) {
-    const c = calculateProjectMaterials(goal.operator, '天赋', s - 1, s);
-    if (c) acc = addCost(acc, c);
-  }
+  // 天赋 (潜能) — 不计入规划：游戏机制是抽卡获取信物，无法 farm，规划器不应展示成本
+  // 字段仍保留在 OperatorState 里用于"干员页"记录当前潜能值
 
   // 基建
   for (let s = current.基建 + 1; s <= goal.target.基建; s++) {

@@ -12,7 +12,7 @@ function buildSummary(goal: OperatorGoal): string {
   const t = goal.target;
   const parts: string[] = [];
   parts.push(`精${t['精英阶段']} Lv.${t['等级']}`);
-  parts.push(`装${t['装备适配']} 天${t['天赋']}`);
+  parts.push(`装${t['装备适配']} 建${t['基建']} 信${t['信赖']}`);
   parts.push(`技能 ${t['技能1']}/${t['技能2']}/${t['技能3']}/${t['技能4']}`);
   return parts.join(' · ');
 }

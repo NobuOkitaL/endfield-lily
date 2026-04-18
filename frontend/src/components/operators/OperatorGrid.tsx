@@ -51,7 +51,7 @@ export function OperatorGrid() {
                   style={{ fontSize: '10px', letterSpacing: '1.5px' }}
                 >
                   {has
-                    ? `精${has.精英阶段} LV.${has.等级} 装${has.装备适配} 天${has.天赋} 建${has.基建} 信${has.信赖}`
+                    ? `精${has.精英阶段} LV.${has.等级} 装${has.装备适配} 潜${has.天赋} 建${has.基建} 信${has.信赖}`
                     : '未持有'}
                 </div>
               </div>

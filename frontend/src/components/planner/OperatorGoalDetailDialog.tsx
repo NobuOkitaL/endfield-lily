@@ -16,10 +16,10 @@ const FIELDS: {
   min: number;
   max: number;
 }[] = [
+  // 潜能（内部字段仍叫 天赋）不在此列出 —— 由抽卡获取信物，无法 farm，不参与规划
   { key: '精英阶段', label: '精英阶段', min: 0, max: 4 },
   { key: '等级', label: '等级', min: 1, max: 90 },
   { key: '装备适配', label: '装备适配', min: 0, max: 3 },
-  { key: '天赋', label: '天赋', min: 0, max: 4 },
   { key: '基建', label: '基建', min: 0, max: 4 },
   { key: '信赖', label: '信赖', min: 0, max: 4 },
   { key: '技能1', label: '技能1', min: 1, max: 12 },

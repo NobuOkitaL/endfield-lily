@@ -15,7 +15,7 @@ const FIELDS: { key: keyof OperatorState; label: string; min: number; max: numbe
   { key: '精英阶段', label: '精英阶段', min: 0, max: 4 },
   { key: '等级', label: '等级', min: 1, max: 90 },
   { key: '装备适配', label: '装备适配', min: 0, max: 3 },
-  { key: '天赋', label: '天赋', min: 0, max: 4 },
+  { key: '天赋', label: '潜能', min: 0, max: 5 },
   { key: '基建', label: '基建', min: 0, max: 4 },
   { key: '信赖', label: '信赖', min: 0, max: 4 },
   { key: '技能1', label: '技能1', min: 1, max: 12 },
