@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-《明日方舟：终末地》养成规划器。React + TS 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）做截图识别。**数据主源是 [end.wiki](https://end.wiki)**（2026-04-17 从原始 zmdgraph 迁移）。
+**总控核心 Lily（Central Core Lily）** — 《明日方舟：终末地》养成规划器。React + TS 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）做截图识别。**数据主源是 [end.wiki](https://end.wiki)**（2026-04-17 从原始 zmdgraph 迁移）。
+
+**品牌 vs 代码标识符**：用户可见的品牌名是 "总控核心 Lily"（HomePage hero、Nav 侧栏、浏览器 tab 标题）。但仓库内部保留 `ZMD` 缩写作为代码层标识符：目录名 `/Users/nobuokita/Desktop/ZMD`、GitHub repo `NobuOkitaL/ZMD`、localStorage key `zmd-planner-state`、pytest config `zmd-backend`。**不要改这些内部 key** —— 改 localStorage key 会清掉所有用户数据。
 
 - **Spec**：`docs/superpowers/specs/2026-04-17-zmd-planner-design.md`
 - **Plan A**（前端规划器，已交付 17/17）：`docs/superpowers/plans/2026-04-17-plan-a-planner-frontend.md`

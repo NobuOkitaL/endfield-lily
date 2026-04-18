@@ -1,6 +1,12 @@
-# ZMD — 终末地养成规划器（本地版）
+# 总控核心 Lily — 终末地养成规划器
 
-本地复刻 [CaffuChin0/zmdgraph](https://github.com/CaffuChin0/zmdgraph) 的《明日方舟：终末地》养成规划器，React + TypeScript 重写，数据从 [end.wiki](https://end.wiki) 通过脚本自动 port。
+> *FROM TERRA TO TALOS II*
+
+《明日方舟：终末地》养成规划器。React + TypeScript 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）做截图识别。数据从 [end.wiki](https://end.wiki) 通过脚本自动 port。
+
+本地运行，所有用户数据（库存、持有干员、规划）存在浏览器 `localStorage`，换浏览器前通过 "设置 → 导出 JSON" 迁移。
+
+> **注**：仓库内部代码标识符保留 `ZMD` 缩写（目录名、localStorage key、workspace 等），只是用户可见的品牌面替换为 "总控核心 Lily"。
 
 **v1**：前端规划器已完整可用。**v2**：Python 后端截图识别（库存页 / 干员列表页 → 自动回填）。
 
