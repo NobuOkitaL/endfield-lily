@@ -6,18 +6,17 @@
 
 **本地运行**：所有用户数据（库存、已持有干员、规划）仅存在浏览器 `localStorage`，跨浏览器迁移通过 "设置 → 导出 JSON"。
 
-**技术栈**：React 19 + TypeScript 6 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）。游戏数据从 [end.wiki](https://end.wiki) 通过脚本自动抓取生成。
+**技术栈**：React 19 + TypeScript 6 前端 + Python 后端（FastAPI + OpenCV + rapidocr-onnxruntime）。
 
 ## 启动
 
-### 前置依赖（所有平台）
+### 前置依赖
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| **Node.js** | 20+ | 装好后确认 `node --version` |
-| **pnpm** | 最新 | `npm install -g pnpm` 或 `corepack enable` |
-| **Python** | 3.11+（已测 3.14） | macOS 有自带 `python3`，Windows 勾选 "Add Python to PATH" |
-| **Git** | 任意 | 克隆 repo 用 |
+| 依赖 | 版本 |
+|------|------|
+| **Node.js** | 20+ ｜
+| **pnpm** | 最新 ｜
+| **Python** | 3.11+｜
 
 首次运行时会：
 - 创建 Python venv 并装依赖（~3-5 分钟，含 opencv-python / rapidocr-onnxruntime / numpy / fastapi 等）
@@ -43,13 +42,6 @@ node start.mjs
 - **macOS / Linux**：`./start.sh`（首次要 `chmod +x start.sh`）
 - **Windows PowerShell**：`.\start.ps1`
   - 如提示执行策略受限，先跑一次：`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
-
-### Windows 常见坑
-
-- `python` 或 `py` 找不到 → 安装时没勾 "Add Python to PATH"，重装或手动加到系统 PATH
-- `pnpm` 找不到 → `npm install -g pnpm`
-- 端口 5173 / 8000 被占 → 先关占用的进程，或改脚本里的端口
-- CMD 里直接跑 `./start.sh` 或 `./start.mjs` 不行 → 用 `node start.mjs` 或 PowerShell
 
 ### 分模块启动（调试用）
 
@@ -92,19 +84,6 @@ py -m venv .venv
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
-
-### 故障排查
-
-| 症状 | 原因 / 解决 |
-|------|------------|
-| `pnpm: command not found` | `npm install -g pnpm` 或启用 corepack：`corepack enable` |
-| `python3: command not found`（Windows） | 用 `py` 或 `python`；或重装 Python 勾选 "Add to PATH" |
-| `pip install` 卡在 `opencv-python` / `numpy` | 装包期间要下几十 MB wheel，确保网络；国内可配 `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt` |
-| 识别接口第一次调用很慢 / 卡住 | rapidocr 首次要下 ONNX 模型文件（约 10-50MB），等它下完就好；需要能访问 github raw / huggingface mirror |
-| 端口 5173 / 8000 被占 | `lsof -i :5173`（mac/linux）或 `netstat -ano \| findstr :5173`（Windows）找到占用进程杀掉 |
-| 前端白屏 / 数据加载不出来 | 打开浏览器 DevTools 看 Console；大概率是 `localStorage` 里有老版 schema 残留，设置页导出 JSON 备份 → 浏览器清该站点 `localStorage` → 导入恢复 |
-| Windows PowerShell 提示 "无法加载脚本" | 执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
-| 识别页显示 "后端未连接" | `start.sh`/`start.ps1` 没把后端起起来，或后端启动报错；单独开终端跑"分模块启动 → 后端"的命令看具体错误 |
 
 ## 功能
 
