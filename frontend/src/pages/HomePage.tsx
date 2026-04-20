@@ -37,7 +37,7 @@ export default function HomePage() {
         style={{ marginLeft: '-2rem', marginRight: '-2rem', paddingLeft: '2rem', paddingRight: '2rem' }}
       >
         {/* Corner brackets on the whole hero */}
-        <CornerBrackets className="border-white/10" />
+        <CornerBrackets offset={0} />
 
         {/* Vertical glitch text — left ambient decor */}
         <div
