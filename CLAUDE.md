@@ -17,10 +17,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Work dir: `backend/`. Activate venv: `source backend/.venv/bin/activate`.
 - Dev server: `uvicorn app.main:app --port 8000 --reload`
-- Tests: `pytest` (39 tests across pipeline modules + endpoint integration)
+- Tests: `pytest` (45 tests across pipeline modules, endpoint integration, weapons endpoint, dev-label endpoints)
 - One-command launch both: `./start.sh` at repo root
 
+Endpoints currently registered:
+- `POST /recognize/inventory` · `POST /recognize/operators` · `POST /recognize/weapons`
+- `POST /dev/{asset_type}/extract-slots` · `POST /dev/{asset_type}/save-templates` · `GET /dev/{asset_type}/names` (see `routes/dev.py`; `asset_type ∈ {materials, operators, weapons}`; used by `label-tool/`)
+
 OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; this is the documented fallback). Tiered OCR confidence: ≥0.8 trust, 0.5–0.8 trust only if parses cleanly, <0.5 unknown.
+
+Template matching was swapped from `cv2.matchTemplate(TM_CCOEFF_NORMED)` on grayscale to a **pixelmatch-style per-pixel RGBA L1 diff on 100×100 BGRA thumbnails** (ported from `arkntools/depot-recognition`, MIT). Templates and queries both go through `_normalize_thumbnail`: central-84% crop (templates only), 5×5 Gaussian blur, 100×100 `INTER_CUBIC`, white rect over quantity region `(x=20,y=72,w=60,h=22)`, circular alpha mask. `match_slot` returns confidence `= 1 - diff_ratio` (higher-is-better preserved); default threshold is **0.80**. `load_and_normalize` still grayscales — long-term it should go full color; flag if you touch it.
+
+**Known template gap**: shipped templates are end.wiki hero renders, not pixel-aligned with real in-game slot cards, so confidence on real screenshots hovers ~0.36-0.44. Re-capturing via `label-tool/` is the intended fix; don't chase this with threshold tweaks.
 
 ## Commands
 
@@ -30,12 +38,14 @@ All frontend commands run from `frontend/`:
 pnpm dev              # Vite dev server → http://localhost:5173
 pnpm build            # tsc -b && vite build
 pnpm lint             # ESLint
-pnpm test             # Vitest run (all tests, currently 67)
+pnpm test             # Vitest run (all tests, currently 84)
 pnpm test:watch       # Vitest watch
 pnpm test -- <file>   # Run one test file (e.g. pnpm test -- cost-calc)
 ```
 
 TypeScript sanity check: `npx tsc --noEmit` (run from `frontend/`).
+
+**`label-tool/` is a separate tree**: Vite + React + TS + Tailwind mini-app (no shadcn, no router) for capturing real-game-screenshot templates. Runs on port **5174** (`strictPort: true`). Zero imports from `frontend/`. CORS in `backend/app/main.py` already allows `:5174`. Don't try to fold it into the main frontend.
 
 Design spec lives in `docs/design/theverge.md`. Project spec + plans under `docs/superpowers/`. `reference/` is clone-space for upstream repos and is **gitignored** — never commit its contents.
 
@@ -98,6 +108,8 @@ Button positioning convention across the app:
 ### Tests
 
 Co-located `*.test.ts` with the code they cover. Vitest + jsdom. Tests that touch the store call `useAppStore.setState(useAppStore.getInitialState())` in `beforeEach` and `localStorage.clear()`. Data-layer tests assert counts (39 materials, 26 operators, 68 weapons, etc.) — if those assertions fail after a data re-port, **update the test** to match the new generated reality rather than reverting the port.
+
+Recognition-merge tests live in `src/logic/recognition-merge.test.ts` (dedupe by id, max value, higher-confidence bbox wins, unknowns concatenate — same rules for inventory / operators / weapons).
 
 ## Workflow norms
 

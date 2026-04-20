@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mergeInventoryResponses, mergeOperatorsResponses } from './recognition-merge';
-import type { InventoryResponse, OperatorsResponse } from '@/api/recognition';
+import { mergeInventoryResponses, mergeOperatorsResponses, mergeWeaponsResponses } from './recognition-merge';
+import type { InventoryResponse, OperatorsResponse, WeaponsResponse } from '@/api/recognition';
 
 function invItem(id: string, qty: number, conf = 0.9, bbox: [number, number, number, number] = [0, 0, 50, 50]) {
   return { material_id: id, material_name: id, quantity: qty, confidence: conf, bbox };
@@ -8,6 +8,10 @@ function invItem(id: string, qty: number, conf = 0.9, bbox: [number, number, num
 
 function opItem(id: string, level: number, conf = 0.9, bbox: [number, number, number, number] = [0, 0, 50, 50]) {
   return { operator_id: id, name: id, level, confidence: conf, bbox };
+}
+
+function wpItem(id: string, level: number, conf = 0.9, bbox: [number, number, number, number] = [0, 0, 50, 50]) {
+  return { weapon_id: id, name: id, level, confidence: conf, bbox };
 }
 
 describe('mergeInventoryResponses', () => {
@@ -57,5 +61,25 @@ describe('mergeOperatorsResponses', () => {
     const merged = mergeOperatorsResponses([r1, r2]);
     const byId = Object.fromEntries(merged.items.map((i) => [i.operator_id, i.level]));
     expect(byId).toEqual({ lily: 70, chen: 55 });
+  });
+});
+
+describe('mergeWeaponsResponses', () => {
+  it('deduplicates by weapon_id and keeps max level', () => {
+    const r1: WeaponsResponse = { items: [wpItem('w1', 30), wpItem('w2', 60)], unknowns: [] };
+    const r2: WeaponsResponse = { items: [wpItem('w1', 75), wpItem('w2', 55)], unknowns: [] };
+    const merged = mergeWeaponsResponses([r1, r2]);
+    const byId = Object.fromEntries(merged.items.map((i) => [i.weapon_id, i.level]));
+    expect(byId).toEqual({ w1: 75, w2: 60 });
+  });
+
+  it('adopts higher-confidence bbox on merge but still maxes level', () => {
+    const r1: WeaponsResponse = { items: [wpItem('w1', 80, 0.6, [0, 0, 10, 10])], unknowns: [] };
+    const r2: WeaponsResponse = { items: [wpItem('w1', 40, 0.95, [5, 5, 20, 20])], unknowns: [] };
+    const merged = mergeWeaponsResponses([r1, r2]);
+    expect(merged.items).toHaveLength(1);
+    expect(merged.items[0].level).toBe(80);
+    expect(merged.items[0].confidence).toBe(0.95);
+    expect(merged.items[0].bbox).toEqual([5, 5, 20, 20]);
   });
 });

@@ -71,7 +71,7 @@ async def recognize_operators(image: UploadFile = File(...)):
     slots = detect_slots(canvas)
 
     library = _load_library()
-    operators: list[dict] = []
+    items: list[dict] = []
     unknowns: list[dict] = []
 
     for bbox in slots:
@@ -81,7 +81,7 @@ async def recognize_operators(image: UploadFile = File(...)):
         portrait = canvas[y : y + portrait_h, x : x + w]
         level_region = canvas[y + portrait_h : y + h, x : x + w]
 
-        match = match_slot(portrait, library, threshold=0.85)
+        match = match_slot(portrait, library, threshold=0.80)
 
         raw_text, conf = ocr_digits(level_region)
         # Strip "Lv." / "Lv" prefix before numeric parsing
@@ -103,14 +103,14 @@ async def recognize_operators(image: UploadFile = File(...)):
             )
             continue
 
-        operators.append(
+        items.append(
             {
                 "operator_id": match.material_id,
-                "name": match.material_id,  # TODO: map id → display name via operators.json
+                "name": match.material_id,
                 "level": level,
                 "confidence": match.confidence,
                 "bbox": _bbox_to_list(bbox),
             }
         )
 
-    return {"operators": operators, "unknowns": unknowns}
+    return {"items": items, "unknowns": unknowns}

@@ -76,21 +76,21 @@ def test_operators_endpoint_returns_operators_for_synthetic_screenshot(client, m
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "operators" in data
+    assert "items" in data
     assert "unknowns" in data
 
     # Template matching should be perfect (library is exactly the pipeline output).
     # OCR on cv2.putText level text is the lossy step — allow up to 1 failure out of 3.
     total_placed = len(ordered_names)
-    ops_plus_unknowns = len(data["operators"]) + len(data["unknowns"])
+    ops_plus_unknowns = len(data["items"]) + len(data["unknowns"])
     assert ops_plus_unknowns == total_placed, (
         f"pipeline saw {ops_plus_unknowns} slots but placed {total_placed}"
     )
-    assert len(data["operators"]) >= total_placed - 1, (
+    assert len(data["items"]) >= total_placed - 1, (
         f"only {len(data['operators'])}/{total_placed} operators recognized; "
         f"unknowns: {[u.get('raw_ocr_text') for u in data['unknowns']]}"
     )
-    for op in data["operators"]:
+    for op in data["items"]:
         assert op["operator_id"] in ordered_names
         assert isinstance(op["level"], int)
         assert "confidence" in op and 0.0 <= op["confidence"] <= 1.0

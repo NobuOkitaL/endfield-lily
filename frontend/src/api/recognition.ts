@@ -51,6 +51,31 @@ export interface OperatorsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Weapons response types
+// ---------------------------------------------------------------------------
+
+export interface WeaponItem {
+  weapon_id: string;
+  name: string;
+  level: number;
+  confidence: number;
+  bbox: [number, number, number, number];
+}
+
+export interface UnknownWeaponSlot {
+  bbox: [number, number, number, number];
+  icon_thumbnail_base64: string;
+  best_guess_weapon_id: string | null;
+  best_guess_confidence: number;
+  raw_ocr_text: string;
+}
+
+export interface WeaponsResponse {
+  items: WeaponItem[];
+  unknowns: UnknownWeaponSlot[];
+}
+
+// ---------------------------------------------------------------------------
 // API functions
 // ---------------------------------------------------------------------------
 
@@ -60,7 +85,7 @@ export interface OperatorsResponse {
  */
 export async function recognizeInventory(file: File): Promise<InventoryResponse> {
   const form = new FormData();
-  form.append('file', file);
+  form.append('image', file);
 
   const res = await fetch(`${API_BASE}/recognize/inventory`, {
     method: 'POST',
@@ -80,7 +105,7 @@ export async function recognizeInventory(file: File): Promise<InventoryResponse>
  */
 export async function recognizeOperators(file: File): Promise<OperatorsResponse> {
   const form = new FormData();
-  form.append('file', file);
+  form.append('image', file);
 
   const res = await fetch(`${API_BASE}/recognize/operators`, {
     method: 'POST',
@@ -92,6 +117,26 @@ export async function recognizeOperators(file: File): Promise<OperatorsResponse>
   }
 
   return res.json() as Promise<OperatorsResponse>;
+}
+
+/**
+ * POST multipart/form-data to /recognize/weapons
+ * Returns structured weapon recognition results.
+ */
+export async function recognizeWeapons(file: File): Promise<WeaponsResponse> {
+  const form = new FormData();
+  form.append('image', file);
+
+  const res = await fetch(`${API_BASE}/recognize/weapons`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) {
+    throw new Error(`recognizeWeapons failed: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json() as Promise<WeaponsResponse>;
 }
 
 /**

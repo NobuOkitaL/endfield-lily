@@ -6,6 +6,8 @@ import type {
   InventoryResponse,
   OperatorItem,
   OperatorsResponse,
+  WeaponItem,
+  WeaponsResponse,
 } from '@/api/recognition';
 
 export function mergeInventoryResponses(responses: InventoryResponse[]): InventoryResponse {
@@ -53,6 +55,32 @@ export function mergeOperatorsResponses(responses: OperatorsResponse[]): Operato
         merged.bbox = item.bbox;
       }
       byId.set(item.operator_id, merged);
+    }
+  }
+  return {
+    items: Array.from(byId.values()),
+    unknowns: responses.flatMap((r) => r.unknowns),
+  };
+}
+
+export function mergeWeaponsResponses(responses: WeaponsResponse[]): WeaponsResponse {
+  const byId = new Map<string, WeaponItem>();
+  for (const r of responses) {
+    for (const item of r.items) {
+      const prev = byId.get(item.weapon_id);
+      if (!prev) {
+        byId.set(item.weapon_id, { ...item });
+        continue;
+      }
+      const merged: WeaponItem = {
+        ...prev,
+        level: Math.max(prev.level, item.level),
+      };
+      if (item.confidence > prev.confidence) {
+        merged.confidence = item.confidence;
+        merged.bbox = item.bbox;
+      }
+      byId.set(item.weapon_id, merged);
     }
   }
   return {

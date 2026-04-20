@@ -2,6 +2,67 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-20 · 识别 pipeline 大修 + 武器识别 + label-tool
+
+### 识别算法换成 pixelmatch 风格
+
+原方案 `cv2.matchTemplate(TM_CCOEFF_NORMED)`（灰度 NCC）对真实截图很脆，改成从 `arkntools/depot-recognition`（MIT）移植过来的**按像素 RGBA L1 diff**，走 100×100 BGRA 缩略图。模板与 query 共用一条 `_normalize_thumbnail`：
+
+- 中央 84% 裁剪（仅模板，剥外框）
+- 5×5 高斯模糊
+- 100×100 `INTER_CUBIC`
+- 右下数量区（x=20, y=72, w=60, h=22）盖白方块
+- 圆形 alpha mask
+
+`match_slot` 返回 `confidence = 1 - diff_ratio`（higher-is-better 语义不变），默认阈值由 0.85 降到 **0.80**，相关单测跟着调。
+
+**还没真正可用的前提**：仓库现在装的模板图是 end.wiki 的英雄渲染图（3D + 透明底），跟游戏内真实格子在像素层面就不对齐，真实截图置信度落在 0.36-0.44。算法没错——模板得从真游戏截图重采才有意义。这也是下面 label-tool 存在的理由。
+
+`load_and_normalize` 目前仍先灰度化，长期得让整条 pipeline 走全色，先挂 backlog。
+
+### 武器识别端点
+
+- 新增 `POST /recognize/weapons`（上 70% 图标 + 下 30% OCR 等级，复用干员那条 pipeline）
+- 前端：`recognizeWeapons()` API 函数 + `WeaponsResponse` / `WeaponItem` 类型 + `mergeWeaponsResponses` 合并函数 + 新的 `WeaponResultEditor` + `RecognizePage` 新段
+
+### 多图上传 + 去重
+
+- `UploadDropzone` 支持 `multiple`，回调签名 `onFile(File)` → `onFiles(File[])`，drop 时过滤非图片
+- 新 `logic/recognition-merge.ts`：`mergeInventoryResponses` / `mergeOperatorsResponses` / `mergeWeaponsResponses`，按 id（material_id / operator_id / weapon_id）去重，值字段取 `max`（数量 / 等级 / 等级），bbox + 置信度跟更高那次观察走，unknowns 拼接
+- `RecognizePage` 串行批处理并显示进度（`PROCESSING 2/5...`）
+
+### 顺手修的老 bug（识别这摊一直半死不活的根因）
+
+- 前端 multipart 字段名写的是 `file`，后端三个端点都要 `image` —— **三路识别调用全在 422**。改成 `image` 才通
+- `POST /recognize/operators` 后端返回 `{operators, unknowns}`，前端类型期待 `{items, unknowns}` —— 即便 OCR 成功，前端拿到的也是空数组。后端改成返回 `items`
+
+### 独立模板标注工具 `label-tool/`
+
+独立的 Vite + React + TS + Tailwind 小应用（没 shadcn、没 router），**不合进主前端**（避免污染主 app 依赖 + 打包，而且它只给开发者用）。
+
+- 端口固定 **5174**（主前端 5173、后端 8000），`strictPort: true`
+- 零依赖 `frontend/`
+- UX：选资产类型（材料 / 干员 / 武器）→ 上传游戏截图 → 每个检测到的格子显示裁剪图 + 候选名下拉 → 批量保存
+- 后端 `backend/app/routes/dev.py`（注册到 `main.py`）：
+  - `POST /dev/{asset_type}/extract-slots` 返回 slot bbox + base64 图标
+  - `POST /dev/{asset_type}/save-templates` 写 PNG 到 `backend/app/assets/{asset_type}/{name}.png` + 更新对应 JSON
+  - `GET /dev/{asset_type}/names` 返回该资产类型的合法名字列表
+  - `asset_type ∈ {materials, operators, weapons}`
+- CORS 加了 `:5174`
+- 仓库里本来就有 3 个 dev 端点单测（router 从没注册过，一直在失败）—— 这次一并跑通
+
+### 杂项 UI 修
+
+- **StockGrid 改版**：从 "有边框的大卡 + 大输入框" 改成**紧凑圆形图标磁贴**（~64px 圆 + 下方输入 + 小号名称 caption），响应式最多到 xl 10 列，搜索框保留，EXP 虚拟材料展示信号黄只读数值（不可输入），鼠标悬浮时 ring 变信号黄
+- **Nav 悬浮色**：侧栏 link hover 之前是军绿，改成和终末地主 accent 一致的**信号黄**；focus-visible 的浏览器默认蓝/紫 glow 去掉
+- **CornerBrackets**：加 `offset` prop（默认 6px，让角标**外推**超出父元素，避免和圆角边框重叠），加 `size` prop；首页 hero 显式传 `offset={0}` 保留原贴边行为
+- **.gitignore 收紧**：显式列 `.specstory/`（IDE 对话历史目录，一直 untracked）+ `.claude/`；`.env.local` → `.env.*` + `!.env.example` 逃生口；补 `*.log`
+
+### 测试计数
+
+- 前端 **77 → 84**（+5 合并测试 for inventory + operators，+2 weapons）
+- 后端 **39 → 45**（+2 weapons endpoint，+3 dev endpoint + 1 其他）
+
 ## 2026-04-17 · v0.1 · Plan A（前端规划器）
 
 17 个任务交付一个能用的前端规划器，数据源从 `CaffuChin0/zmdgraph` 的 `data.js` 机械化 port 而来。
@@ -108,22 +169,26 @@
 - 库存页、干员页、武器页、规划页、规划详情 dialog 全部接通
 - 端末地迁移后补抓了 3 张新图（庄方宜 / 孤舟 / 雾中微光），改名的 2 件也拉了新版（显锋 / O.B.J.迅极）
 
-## 当前状态快照（提交时）
+## 当前状态快照（2026-04-20）
 
-- **repo**：`NobuOkitaL/endfield-lily`
-- **HEAD**：`f636c6c feat(farm): essence farming planner`
-- **前端测试**：77 passing / 10 files
-- **后端测试**：39 passing（pipeline unit + endpoint integration）
+- **repo**：`NobuOkitaL/endfield-lily`（本地目录仍 `ZMD/`）
+- **前端测试**：84 passing
+- **后端测试**：45 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints）
 - **TypeScript**：clean（tsc --noEmit）
-- **页面**：首页 / 规划 / 库存 / 干员 / 武器 / **基质** / 识别 / 设置（8 个）
+- **页面**：首页 / 规划 / 库存 / 干员 / 武器 / 基质 / 识别 / 设置（8 个）
+- **独立工具**：`label-tool/`（端口 5174，用于重采模板）
 - **数据**：26 干员 / 68 武器 / 39 材料 / 486 行 DATABASE / 7 张能量淤积点
+- **识别算法**：pixelmatch 风格 RGBA L1 diff（confidence = 1 - diff_ratio, 阈值 0.80）
 - **字体**：Anton + Hanken Grotesk + JetBrains Mono
 - **色板**：Signal Yellow + Military Green + Alert Red + Canvas `#0a0a0a`
 
 ## Backlog
 
-- 真实截图 fixture（库存 ≥10 张 / 干员列表 ≥5 张）做识别回归
+- **用 label-tool 采一批真实截图模板**，再跑识别回归（这是当前识别"能不能实际用"的主要阻塞）
+- `load_and_normalize` 改走全色（目前仍先灰度）
+- 真实截图 fixture（库存 ≥10 张 / 干员列表 ≥5 张 / 武器列表 ≥5 张）做识别回归
 - `基建` / `装备适配` / `信赖` 的 end.wiki 边界值回归（当前只做了 spot check）
 - 能量淤积点图标 / 地图缩略图（目前方案卡片只有文字）
 - 数据自动同步：定时 / 按需触发 `scripts/port-from-endwiki.mjs all` 并自动打 diff PR
 - 移动端响应式（目前桌面优先）
+- `settings.darkMode` + `toggleDarkMode` 是 vestigial 字段（Verge 改版后唯一 dark），下次动 store schema 时顺手清

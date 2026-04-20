@@ -70,7 +70,7 @@ async def recognize_inventory(image: UploadFile = File(...)):
         icon = canvas[y : y + icon_h, x : x + w]
         quantity_region = canvas[y + icon_h : y + h, x : x + w]
 
-        match = match_slot(icon, library, threshold=0.85)
+        match = match_slot(icon, library, threshold=0.80)
 
         raw_text, conf = ocr_digits(quantity_region)
         quantity = parse_ocr_result(raw_text, conf)

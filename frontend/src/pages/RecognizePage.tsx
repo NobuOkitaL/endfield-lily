@@ -3,15 +3,18 @@ import { useEffect, useState } from 'react';
 import { UploadDropzone } from '@/components/recognize/UploadDropzone';
 import { InventoryResultEditor } from '@/components/recognize/InventoryResultEditor';
 import { OperatorResultEditor } from '@/components/recognize/OperatorResultEditor';
+import { WeaponResultEditor } from '@/components/recognize/WeaponResultEditor';
 import {
   checkBackendHealth,
   recognizeInventory,
   recognizeOperators,
+  recognizeWeapons,
 } from '@/api/recognition';
-import type { InventoryResponse, OperatorsResponse } from '@/api/recognition';
+import type { InventoryResponse, OperatorsResponse, WeaponsResponse } from '@/api/recognition';
 import {
   mergeInventoryResponses,
   mergeOperatorsResponses,
+  mergeWeaponsResponses,
 } from '@/logic/recognition-merge';
 
 export default function RecognizePage() {
@@ -30,6 +33,13 @@ export default function RecognizePage() {
   const [opError, setOpError] = useState<string | null>(null);
   const [opResult, setOpResult] = useState<OperatorsResponse | null>(null);
   const [opMsg, setOpMsg] = useState<string | null>(null);
+
+  // Weapon section state
+  const [wpBusy, setWpBusy] = useState(false);
+  const [wpProgress, setWpProgress] = useState<{ done: number; total: number } | null>(null);
+  const [wpError, setWpError] = useState<string | null>(null);
+  const [wpResult, setWpResult] = useState<WeaponsResponse | null>(null);
+  const [wpMsg, setWpMsg] = useState<string | null>(null);
 
   useEffect(() => {
     void checkBackendHealth().then(setBackendOk);
@@ -76,6 +86,28 @@ export default function RecognizePage() {
     } finally {
       setOpBusy(false);
       setOpProgress(null);
+    }
+  }
+
+  async function handleWeaponFiles(files: File[]) {
+    setWpBusy(true);
+    setWpError(null);
+    setWpResult(null);
+    setWpMsg(null);
+    setWpProgress({ done: 0, total: files.length });
+    const results: WeaponsResponse[] = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const r = await recognizeWeapons(files[i]);
+        results.push(r);
+        setWpProgress({ done: i + 1, total: files.length });
+      }
+      setWpResult(mergeWeaponsResponses(results));
+    } catch (e) {
+      setWpError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWpBusy(false);
+      setWpProgress(null);
     }
   }
 
@@ -259,6 +291,81 @@ export default function RecognizePage() {
                   setOpResult(null);
                   setOpMsg(null);
                   setOpError(null);
+                }}
+                className="font-mono uppercase text-white/40 hover:text-white/70 transition-colors text-xs"
+                style={{ letterSpacing: '1.5px' }}
+              >
+                取消 / CANCEL
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* ── Weapons section ──────────────────────────────────── */}
+        <section className="space-y-4">
+          <div>
+            <div
+              className="font-mono uppercase text-signal mb-1"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              WEAPON ROSTER / 武器列表截图
+            </div>
+            <h2
+              className="font-display text-white"
+              style={{ fontSize: '32px', lineHeight: '0.90' }}
+            >
+              武器截图
+            </h2>
+          </div>
+
+          {!wpResult && (
+            <UploadDropzone
+              onFiles={handleWeaponFiles}
+              label="上传武器列表截图，自动识别武器等级（支持多张，同名取最大值）"
+            />
+          )}
+
+          {wpBusy && (
+            <div
+              className="font-mono uppercase text-signal"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              PROCESSING{wpProgress ? ` ${wpProgress.done}/${wpProgress.total}` : ''}...
+            </div>
+          )}
+
+          {wpError && (
+            <div
+              className="font-mono uppercase text-alert"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              {wpError}
+            </div>
+          )}
+
+          {wpMsg && (
+            <div
+              className="font-mono uppercase text-signal"
+              style={{ fontSize: '11px', letterSpacing: '1.8px' }}
+            >
+              {wpMsg}
+            </div>
+          )}
+
+          {wpResult && (
+            <div className="space-y-4">
+              <WeaponResultEditor
+                result={wpResult}
+                onApplied={() => {
+                  setWpResult(null);
+                  setWpMsg('已合并到武器');
+                }}
+              />
+              <button
+                onClick={() => {
+                  setWpResult(null);
+                  setWpMsg(null);
+                  setWpError(null);
                 }}
                 className="font-mono uppercase text-white/40 hover:text-white/70 transition-colors text-xs"
                 style={{ letterSpacing: '1.5px' }}
