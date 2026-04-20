@@ -24,35 +24,32 @@
 - 跑 pnpm install（~1-2 分钟）
 - 首次调用识别接口时自动下载 ONNX 模型（几十 MB，需要网络）
 
-### macOS / Linux
+### 跨平台一条命令（推荐）
+
+macOS / Linux / Windows **通用**：
 
 ```bash
-./start.sh
-# 访问 http://localhost:5173（前端）+ http://localhost:8000/docs（后端 OpenAPI）
+node start.mjs
 ```
 
-如果 `./start.sh` 报 "permission denied"：`chmod +x start.sh` 后再跑。
+首次运行会自动建 venv + 装 Python 依赖 + `pnpm install`。跑起来后：
+- 前端：http://localhost:5173
+- 后端 OpenAPI：http://localhost:8000/docs
+- 日志打了 `[backend]` / `[frontend]` 标签、按色区分
+- Ctrl+C 同时结束两端
 
-### Windows
+### 平台专属脚本（可选）
 
-**PowerShell**（推荐）：
+- **macOS / Linux**：`./start.sh`（首次要 `chmod +x start.sh`）
+- **Windows PowerShell**：`.\start.ps1`
+  - 如提示执行策略受限，先跑一次：`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
 
-```powershell
-.\start.ps1
-```
+### Windows 常见坑
 
-首次跑可能提示执行策略受限，打开 PowerShell 执行一次：
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-**或者在 Git Bash 里直接跑 `./start.sh`**（如果你装了 Git for Windows，一般自带 Git Bash，和 macOS 用法一样）。
-
-Windows 常见坑：
-- `python` 命令找不到 → 安装时没勾 "Add Python to PATH"，重装或手动加到系统 PATH
-- `pnpm` 找不到 → 跑 `npm install -g pnpm`
-- 端口 5173 / 8000 被占 → 先关掉占用的进程，或改 `start.ps1` / `frontend/vite.config.ts` 里的端口
+- `python` 或 `py` 找不到 → 安装时没勾 "Add Python to PATH"，重装或手动加到系统 PATH
+- `pnpm` 找不到 → `npm install -g pnpm`
+- 端口 5173 / 8000 被占 → 先关占用的进程，或改脚本里的端口
+- CMD 里直接跑 `./start.sh` 或 `./start.mjs` 不行 → 用 `node start.mjs` 或 PowerShell
 
 ### 分模块启动（调试用）
 
