@@ -66,6 +66,20 @@
 - 前端 **84 passing**（不变）
 - 后端 **49 → 51**（+2 dev 删除模板测试）
 
+## 2026-04-20（补丁）· 跨浏览器状态同步
+
+之前规划数据只活在 `localStorage` 里，换浏览器 / 换机器要手动导出导入 JSON。补一条后端同步通道：
+
+- 新端点 `GET /state` + `PUT /state`（`backend/app/routes/state.py`），持久化文件 `backend/app/data/state.json`（gitignored via `backend/app/data/`）
+- 前端 `useBackendSync` hook：挂到 store 订阅上，store 有变化就 PUT；启动时先 GET 一次做 rehydrate。后端挂了就翻 `offline` 状态、localStorage 照常写；下次改动 + 后端恢复时自动续上
+- 初版本来做了「设置 → 后端同步」开关（默认关闭），后来简化成**始终开启**：`Settings.syncToBackend` 字段连同 `setSyncToBackend` action 一起删掉，persist 版本 **4 → 5**，migration 顺手丢掉这个字段。设置页只留一条同步状态行，没开关
+- 后端无状态的那条老承诺仍然成立 —— state.json 是**用户数据文件**，不是业务状态；删掉它后端照跑，只是同步文件重新从前端首次写入开始建
+
+### 测试计数
+
+- 前端 **84 passing**（不变）
+- 后端 **51 → 55**（+4 `/state` 端点测试）
+
 ## 2026-04-20 · 识别 pipeline 大修 + 武器识别 + label-tool
 
 ### 识别算法换成 pixelmatch 风格

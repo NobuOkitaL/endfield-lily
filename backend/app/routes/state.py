@@ -4,7 +4,7 @@ Cross-browser state persistence endpoints.
 
 The backend treats the state as an opaque JSON blob — it does NOT parse or
 validate the shape, so the frontend schema can evolve without backend changes.
-Storage is a single file at `backend/data/state.json`; writes are atomic
+Storage is a single file at `backend/app/data/state.json`; writes are atomic
 (temp file + os.replace in the same directory).
 
 Endpoints (no prefix — mounted at `/state`):

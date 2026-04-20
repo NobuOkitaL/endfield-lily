@@ -140,7 +140,7 @@ export default function SettingsPage() {
           </h2>
         </div>
         <p className="font-sans text-[15px] text-[#949494]">
-          规划数据自动同步到本地后端（<code className="font-mono text-[13px] text-white">backend/data/state.json</code>），跨浏览器共享。后端未运行时自动回退到仅 localStorage。
+          规划数据自动同步到本地后端（<code className="font-mono text-[13px] text-white">backend/app/data/state.json</code>），跨浏览器共享。后端未运行时自动回退到仅 localStorage。
         </p>
         <div
           className="font-mono uppercase text-[#949494]"
