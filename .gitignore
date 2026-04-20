@@ -16,11 +16,17 @@ reference/
 .DS_Store
 Thumbs.db
 
-# Editor
+# Editor / IDE
 .idea/
 .vscode/
 *.swp
+.specstory/
+.claude/
+
+# Logs
+*.log
 
 # Local env
 .env
-.env.local
+.env.*
+!.env.example

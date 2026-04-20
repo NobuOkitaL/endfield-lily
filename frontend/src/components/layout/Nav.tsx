@@ -54,7 +54,8 @@ export function Nav() {
           className={({ isActive }) =>
             cn(
               'px-3 py-2 rounded-tag font-mono uppercase transition-colors duration-150',
-              'hover:text-military',
+              'hover:text-signal',
+              'focus-visible:outline-none focus-visible:text-signal',
               isActive
                 ? 'text-signal border-b border-signal'
                 : 'text-white/70',
