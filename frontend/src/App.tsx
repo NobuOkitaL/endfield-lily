@@ -8,8 +8,14 @@ import PlannerPage from '@/pages/PlannerPage';
 import SettingsPage from '@/pages/SettingsPage';
 import RecognizePage from '@/pages/RecognizePage';
 import FarmPage from '@/pages/FarmPage';
+import { useBackendSync } from '@/logic/use-backend-sync';
 
 function App() {
+  // Opt-in cross-browser sync: hydrate-from-backend on mount, push debounced
+  // on any store change. Gated internally on settings.syncToBackend — this
+  // call is effectively a no-op until the user enables the toggle in Settings.
+  useBackendSync();
+
   return (
     <BrowserRouter>
       <Routes>

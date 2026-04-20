@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import dev, inventory, operators, weapons
+from app.routes import dev, inventory, operators, state, weapons
 
 app = FastAPI(title="ZMD 终末地识别后端", version="0.1.0")
 
@@ -23,6 +23,7 @@ app.include_router(inventory.router)
 app.include_router(operators.router)
 app.include_router(weapons.router)
 app.include_router(dev.router)
+app.include_router(state.router)
 
 
 @app.get("/health")

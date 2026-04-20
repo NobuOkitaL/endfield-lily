@@ -95,6 +95,7 @@ uvicorn app.main:app --reload --port 8000
 - **规划**：**每干员/武器一张 TODO 卡片**，紧凑行显示目标摘要，点击弹详情 dialog 一次性编辑所有成长维度。材料齐备时点"完成规划"自动扣库存 + 回写已持有状态
 - **基质刷取**（`/farm`）：选一批目标武器 → 枚举 (能量淤积点 × 3 预刻主属性 × 锁定副词条/技能词) 组合，按"一次刷取能覆盖多少武器"降序给方案
 - **备份**：导出 / 导入 JSON（跨浏览器迁移用）
+- **后端同步**（可选）：在「设置 → 后端同步」打开开关后，规划数据会自动同步到 `backend/data/state.json`，跨浏览器共享，无需手动导入导出。仅当后端运行中时生效；后端离线时自动回退到 localStorage，不影响正常使用。默认关闭，现有用户升级不受影响。
 
 ### 截图识别（后端）
 
@@ -145,7 +146,7 @@ pnpm dev          # http://localhost:5174
 cd frontend && pnpm test
 ```
 
-后端（51 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点含删除）：
+后端（55 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点含删除 + /state 跨浏览器同步）：
 
 ```bash
 cd backend && source .venv/bin/activate && pytest -v

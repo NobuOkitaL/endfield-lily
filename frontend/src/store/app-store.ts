@@ -59,7 +59,9 @@ export interface PlanRow {
   hidden: boolean;
 }
 
-interface Settings { darkMode: boolean }
+interface Settings {
+  darkMode: boolean;
+}
 
 interface AppState {
   stock: Stock;
@@ -130,6 +132,36 @@ const INITIAL: Pick<
   settings: { darkMode: false },
   farmSelectedWeapons: [],
 };
+
+/**
+ * Keys from `AppState` that are persisted AND mirrored to the backend when
+ * cross-browser sync is on. Single source of truth so the `persist` middleware
+ * and `use-backend-sync` hook never drift from each other. Action functions
+ * are deliberately excluded — they're re-created from the store factory on
+ * every load, serializing them would just bloat the blob.
+ */
+export const PERSISTED_KEYS = [
+  'stock',
+  'ownedOperators',
+  'ownedWeapons',
+  'operatorGoals',
+  'weaponGoals',
+  'planRows',
+  'settings',
+  'farmSelectedWeapons',
+] as const satisfies ReadonlyArray<keyof AppState>;
+
+export type PersistedKey = (typeof PERSISTED_KEYS)[number];
+export type PersistedSnapshot = Pick<AppState, PersistedKey>;
+
+/** Extract the persisted slice from the full store state. */
+export function pickPersisted(state: AppState): PersistedSnapshot {
+  const out = {} as Record<PersistedKey, unknown>;
+  for (const key of PERSISTED_KEYS) {
+    out[key] = state[key];
+  }
+  return out as PersistedSnapshot;
+}
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -308,10 +340,31 @@ export const useAppStore = create<AppState>()(
           operatorGoals: parsed.operatorGoals ?? [],
           weaponGoals: parsed.weaponGoals ?? [],
           planRows: parsed.planRows ?? [],
-          settings: parsed.settings ?? { darkMode: false },
+          settings: {
+            darkMode: parsed.settings?.darkMode ?? false,
+          },
         });
       },
     }),
-    { name: 'zmd-planner-state', version: 3 },
+    {
+      name: 'zmd-planner-state',
+      version: 5,
+      // Only persist data — not action functions. Shared with backend sync.
+      partialize: (state) => pickPersisted(state as AppState),
+      // v4 → v5: drop settings.syncToBackend (backend sync is now always on,
+      // no toggle). Any stray field on older persisted state is simply ignored.
+      migrate: (persisted, version) => {
+        if (version < 5) {
+          const p = (persisted ?? {}) as Partial<AppState> & {
+            settings?: Partial<Settings> & { syncToBackend?: boolean };
+          };
+          return {
+            ...p,
+            settings: { darkMode: p.settings?.darkMode ?? false },
+          };
+        }
+        return persisted as AppState;
+      },
+    },
   ),
 );

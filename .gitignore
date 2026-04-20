@@ -30,3 +30,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# User state blob written by the cross-browser sync endpoints (opt-in).
+# Contains the frontend's Zustand snapshot — never commit user data.
+backend/data/
