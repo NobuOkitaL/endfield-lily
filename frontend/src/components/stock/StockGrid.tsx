@@ -19,55 +19,71 @@ export function StockGrid() {
   const rows = MATERIAL_COLUMNS.filter((n) => (filter ? n.includes(filter) : true));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Input
         placeholder="搜索材料..."
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         className="max-w-xs"
       />
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10 gap-x-4 gap-y-6">
         {rows.map((name) => {
           const iconSrc = `/${MATERIAL_ICONS[name]}`;
-          if (VIRTUAL_EXP_MATERIALS.has(name)) {
-            const val = computeVirtualExp(stock, EXP_TYPE_FOR_VIRTUAL[name]);
-            return (
-              <div
-                key={name}
-                className="border border-white/20 rounded-card p-3 bg-canvas border-l-2 border-l-signal"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <img src={iconSrc} alt={name} className="w-8 h-8 rounded-sm shrink-0" loading="lazy" />
-                  <div className="font-sans text-sm font-bold text-white truncate">{name}</div>
-                </div>
-                <div
-                  className="font-mono uppercase text-[#949494] mt-0.5"
-                  style={{ fontSize: '10px', letterSpacing: '1.1px' }}
-                >
-                  计算值
-                </div>
-                <div className="font-mono text-signal mt-1.5" style={{ fontSize: '18px' }}>
-                  {val.toLocaleString()}
-                </div>
-              </div>
-            );
-          }
-          const current = stock[name as MaterialName] ?? 0;
+          const isVirtual = VIRTUAL_EXP_MATERIALS.has(name);
+
           return (
-            <div key={name} className="border border-white/20 rounded-card p-3 bg-canvas">
-              <div className="flex items-center gap-2 mb-2">
-                <img src={iconSrc} alt={name} className="w-8 h-8 rounded-sm shrink-0" loading="lazy" />
-                <div className="font-sans text-sm font-bold text-white truncate">{name}</div>
-              </div>
-              <Input
-                type="number"
-                min={0}
-                value={current}
-                placeholder="0"
-                onChange={(e) =>
-                  setStock(name as MaterialName, Math.max(0, Number(e.target.value) || 0))
+            <div
+              key={name}
+              className="group flex flex-col items-center text-center"
+              title={name}
+            >
+              {/* Circular icon with ring */}
+              <div
+                className={
+                  isVirtual
+                    ? 'relative w-16 h-16 rounded-full bg-canvas border border-signal/70 flex items-center justify-center overflow-hidden'
+                    : 'relative w-16 h-16 rounded-full bg-canvas border border-white/25 flex items-center justify-center overflow-hidden transition-colors group-hover:border-signal/70'
                 }
-              />
+              >
+                <img
+                  src={iconSrc}
+                  alt={name}
+                  className="w-[88%] h-[88%] object-contain"
+                  loading="lazy"
+                />
+              </div>
+
+              {/* Value — input for real, readonly for virtual EXP */}
+              {isVirtual ? (
+                <div
+                  className="mt-2 w-full h-7 flex items-center justify-center bg-white/5 rounded-form font-mono text-signal"
+                  style={{ fontSize: '13px' }}
+                >
+                  {computeVirtualExp(stock, EXP_TYPE_FOR_VIRTUAL[name]).toLocaleString()}
+                </div>
+              ) : (
+                <input
+                  type="number"
+                  min={0}
+                  value={stock[name as MaterialName] ?? 0}
+                  onChange={(e) =>
+                    setStock(name as MaterialName, Math.max(0, Number(e.target.value) || 0))
+                  }
+                  onFocus={(e) => e.target.select()}
+                  className="mt-2 w-full h-7 px-1 bg-white/5 border border-transparent rounded-form
+                             text-center font-mono text-white text-[13px]
+                             focus:outline-none focus:border-signal focus:bg-canvas transition-colors
+                             [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+              )}
+
+              {/* Name caption */}
+              <div
+                className="mt-1.5 font-sans text-white/75 leading-tight w-full truncate"
+                style={{ fontSize: '11px' }}
+              >
+                {name}
+              </div>
             </div>
           );
         })}

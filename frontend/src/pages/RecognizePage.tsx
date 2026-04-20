@@ -9,18 +9,24 @@ import {
   recognizeOperators,
 } from '@/api/recognition';
 import type { InventoryResponse, OperatorsResponse } from '@/api/recognition';
+import {
+  mergeInventoryResponses,
+  mergeOperatorsResponses,
+} from '@/logic/recognition-merge';
 
 export default function RecognizePage() {
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
 
   // Inventory section state
   const [invBusy, setInvBusy] = useState(false);
+  const [invProgress, setInvProgress] = useState<{ done: number; total: number } | null>(null);
   const [invError, setInvError] = useState<string | null>(null);
   const [invResult, setInvResult] = useState<InventoryResponse | null>(null);
   const [invMsg, setInvMsg] = useState<string | null>(null);
 
   // Operator section state
   const [opBusy, setOpBusy] = useState(false);
+  const [opProgress, setOpProgress] = useState<{ done: number; total: number } | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
   const [opResult, setOpResult] = useState<OperatorsResponse | null>(null);
   const [opMsg, setOpMsg] = useState<string | null>(null);
@@ -29,33 +35,47 @@ export default function RecognizePage() {
     void checkBackendHealth().then(setBackendOk);
   }, []);
 
-  async function handleInventoryFile(file: File) {
+  async function handleInventoryFiles(files: File[]) {
     setInvBusy(true);
     setInvError(null);
     setInvResult(null);
     setInvMsg(null);
+    setInvProgress({ done: 0, total: files.length });
+    const results: InventoryResponse[] = [];
     try {
-      const result = await recognizeInventory(file);
-      setInvResult(result);
+      for (let i = 0; i < files.length; i++) {
+        const r = await recognizeInventory(files[i]);
+        results.push(r);
+        setInvProgress({ done: i + 1, total: files.length });
+      }
+      setInvResult(mergeInventoryResponses(results));
     } catch (e) {
       setInvError(e instanceof Error ? e.message : String(e));
     } finally {
       setInvBusy(false);
+      setInvProgress(null);
     }
   }
 
-  async function handleOperatorFile(file: File) {
+  async function handleOperatorFiles(files: File[]) {
     setOpBusy(true);
     setOpError(null);
     setOpResult(null);
     setOpMsg(null);
+    setOpProgress({ done: 0, total: files.length });
+    const results: OperatorsResponse[] = [];
     try {
-      const result = await recognizeOperators(file);
-      setOpResult(result);
+      for (let i = 0; i < files.length; i++) {
+        const r = await recognizeOperators(files[i]);
+        results.push(r);
+        setOpProgress({ done: i + 1, total: files.length });
+      }
+      setOpResult(mergeOperatorsResponses(results));
     } catch (e) {
       setOpError(e instanceof Error ? e.message : String(e));
     } finally {
       setOpBusy(false);
+      setOpProgress(null);
     }
   }
 
@@ -118,8 +138,8 @@ export default function RecognizePage() {
 
           {!invResult && (
             <UploadDropzone
-              onFile={handleInventoryFile}
-              label="上传库存截图，自动识别材料数量"
+              onFiles={handleInventoryFiles}
+              label="上传库存截图，自动识别材料数量（支持多张，同名取最大值）"
             />
           )}
 
@@ -128,7 +148,7 @@ export default function RecognizePage() {
               className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
-              PROCESSING...
+              PROCESSING{invProgress ? ` ${invProgress.done}/${invProgress.total}` : ''}...
             </div>
           )}
 
@@ -193,8 +213,8 @@ export default function RecognizePage() {
 
           {!opResult && (
             <UploadDropzone
-              onFile={handleOperatorFile}
-              label="上传干员列表截图，自动识别干员等级"
+              onFiles={handleOperatorFiles}
+              label="上传干员列表截图，自动识别干员等级（支持多张，同名取最大值）"
             />
           )}
 
@@ -203,7 +223,7 @@ export default function RecognizePage() {
               className="font-mono uppercase text-signal"
               style={{ fontSize: '11px', letterSpacing: '1.8px' }}
             >
-              PROCESSING...
+              PROCESSING{opProgress ? ` ${opProgress.done}/${opProgress.total}` : ''}...
             </div>
           )}
 
