@@ -10,30 +10,104 @@
 
 ## 启动
 
-前置依赖：
-- Node.js 20+ + pnpm
-- Python 3.11+
+### 前置依赖（所有平台）
 
-一键启动（推荐）：
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| **Node.js** | 20+ | 装好后确认 `node --version` |
+| **pnpm** | 最新 | `npm install -g pnpm` 或 `corepack enable` |
+| **Python** | 3.11+（已测 3.14） | macOS 有自带 `python3`，Windows 勾选 "Add Python to PATH" |
+| **Git** | 任意 | 克隆 repo 用 |
+
+首次运行时会：
+- 创建 Python venv 并装依赖（~3-5 分钟，含 opencv-python / rapidocr-onnxruntime / numpy / fastapi 等）
+- 跑 pnpm install（~1-2 分钟）
+- 首次调用识别接口时自动下载 ONNX 模型（几十 MB，需要网络）
+
+### macOS / Linux
 
 ```bash
 ./start.sh
-# 访问 http://localhost:5173（前端）+ http://localhost:8000（后端 API）
+# 访问 http://localhost:5173（前端）+ http://localhost:8000/docs（后端 OpenAPI）
 ```
 
-首次运行会自动创建 Python venv 并安装依赖（约 3-5 分钟）以及执行 pnpm install。第一次调用识别接口时会自动下载 ONNX 模型（小文件，自动处理）。
+如果 `./start.sh` 报 "permission denied"：`chmod +x start.sh` 后再跑。
 
-分模块启动（调试用）：
+### Windows
+
+**PowerShell**（推荐）：
+
+```powershell
+.\start.ps1
+```
+
+首次跑可能提示执行策略受限，打开 PowerShell 执行一次：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**或者在 Git Bash 里直接跑 `./start.sh`**（如果你装了 Git for Windows，一般自带 Git Bash，和 macOS 用法一样）。
+
+Windows 常见坑：
+- `python` 命令找不到 → 安装时没勾 "Add Python to PATH"，重装或手动加到系统 PATH
+- `pnpm` 找不到 → 跑 `npm install -g pnpm`
+- 端口 5173 / 8000 被占 → 先关掉占用的进程，或改 `start.ps1` / `frontend/vite.config.ts` 里的端口
+
+### 分模块启动（调试用）
+
+跑前后端分开，方便看日志。
+
+#### 前端（任意平台）
 
 ```bash
-# 前端
-cd frontend && pnpm install && pnpm dev
+cd frontend
+pnpm install
+pnpm dev
+```
 
-# 后端
-cd backend && python3 -m venv .venv && source .venv/bin/activate
+#### 后端（macOS / Linux）
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
+
+#### 后端（Windows PowerShell）
+
+```powershell
+cd backend
+py -m venv .venv                    # 或 python -m venv .venv
+.\.venv\Scripts\Activate.ps1        # 激活 venv
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+#### 后端（Windows CMD）
+
+```cmd
+cd backend
+py -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### 故障排查
+
+| 症状 | 原因 / 解决 |
+|------|------------|
+| `pnpm: command not found` | `npm install -g pnpm` 或启用 corepack：`corepack enable` |
+| `python3: command not found`（Windows） | 用 `py` 或 `python`；或重装 Python 勾选 "Add to PATH" |
+| `pip install` 卡在 `opencv-python` / `numpy` | 装包期间要下几十 MB wheel，确保网络；国内可配 `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt` |
+| 识别接口第一次调用很慢 / 卡住 | rapidocr 首次要下 ONNX 模型文件（约 10-50MB），等它下完就好；需要能访问 github raw / huggingface mirror |
+| 端口 5173 / 8000 被占 | `lsof -i :5173`（mac/linux）或 `netstat -ano \| findstr :5173`（Windows）找到占用进程杀掉 |
+| 前端白屏 / 数据加载不出来 | 打开浏览器 DevTools 看 Console；大概率是 `localStorage` 里有老版 schema 残留，设置页导出 JSON 备份 → 浏览器清该站点 `localStorage` → 导入恢复 |
+| Windows PowerShell 提示 "无法加载脚本" | 执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| 识别页显示 "后端未连接" | `start.sh`/`start.ps1` 没把后端起起来，或后端启动报错；单独开终端跑"分模块启动 → 后端"的命令看具体错误 |
 
 ## 功能
 
