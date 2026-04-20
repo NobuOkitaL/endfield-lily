@@ -49,10 +49,12 @@ function useBackendHealth(): 'ok' | 'err' | 'loading' {
   return status;
 }
 
-async function fetchNames(assetType: AssetType): Promise<string[]> {
+type NameEntry = { name: string; labeled: boolean };
+
+async function fetchNames(assetType: AssetType): Promise<NameEntry[]> {
   const r = await fetch(`${API_BASE}/dev/${assetType}/names`);
   if (!r.ok) throw new Error(`names failed: ${r.status}`);
-  const j = (await r.json()) as { names: string[] };
+  const j = (await r.json()) as { names: NameEntry[] };
   return j.names;
 }
 
@@ -74,7 +76,7 @@ async function extractSlots(assetType: AssetType, file: File): Promise<Slot[]> {
 async function saveTemplates(
   assetType: AssetType,
   entries: { name: string; icon_base64: string }[],
-): Promise<number> {
+): Promise<{ saved: number; skipped: string[] }> {
   const r = await fetch(`${API_BASE}/dev/${assetType}/save-templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -84,14 +86,29 @@ async function saveTemplates(
     const text = await r.text();
     throw new Error(`save failed (${r.status}): ${text}`);
   }
-  const j = (await r.json()) as { saved: number };
-  return j.saved;
+  return (await r.json()) as { saved: number; skipped: string[] };
+}
+
+async function deleteTemplate(assetType: AssetType, name: string): Promise<void> {
+  const r = await fetch(
+    `${API_BASE}/dev/${assetType}/templates/${encodeURIComponent(name)}`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`delete failed (${r.status}): ${text}`);
+  }
+}
+
+function templateImageUrl(assetType: AssetType, name: string, cacheBust?: number): string {
+  const base = `${API_BASE}/dev/${assetType}/templates/${encodeURIComponent(name)}/image`;
+  return cacheBust ? `${base}?t=${cacheBust}` : base;
 }
 
 export default function App() {
   const health = useBackendHealth();
   const [assetType, setAssetType] = useState<AssetType>('materials');
-  const [names, setNames] = useState<string[]>([]);
+  const [names, setNames] = useState<NameEntry[]>([]);
   const [namesErr, setNamesErr] = useState<string | null>(null);
   const [slots, setSlots] = useState<LabeledSlot[]>([]);
   const [extracting, setExtracting] = useState(false);
@@ -100,10 +117,8 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
-  // Fetch names whenever asset type changes.
-  useEffect(() => {
+  const refreshNames = useCallback(() => {
     let cancelled = false;
-    setNames([]);
     setNamesErr(null);
     fetchNames(assetType)
       .then(ns => {
@@ -116,6 +131,13 @@ export default function App() {
       cancelled = true;
     };
   }, [assetType]);
+
+  // Fetch names whenever asset type changes.
+  useEffect(() => {
+    setNames([]);
+    const cancel = refreshNames();
+    return cancel;
+  }, [assetType, refreshNames]);
 
   // When switching asset type, clear existing labeled slots (they're asset-type specific).
   useEffect(() => {
@@ -186,6 +208,22 @@ export default function App() {
     [slots],
   );
 
+  const [showLabeled, setShowLabeled] = useState(false);
+  const labeledNames = useMemo(() => names.filter(n => n.labeled), [names]);
+
+  const doDelete = async (name: string) => {
+    if (!window.confirm(`删除模板「${name}」？\n（PNG 文件和 labeled 记录都会清掉，之后可以重新标注。）`)) {
+      return;
+    }
+    try {
+      await deleteTemplate(assetType, name);
+      showToast({ kind: 'ok', msg: `已删除「${name}」` });
+      refreshNames();
+    } catch (err) {
+      showToast({ kind: 'err', msg: `删除失败: ${String(err)}` });
+    }
+  };
+
   const doSave = async () => {
     const entries = slots
       .filter(s => s.name.trim() !== '')
@@ -193,10 +231,17 @@ export default function App() {
     if (entries.length === 0) return;
     setSaving(true);
     try {
-      const saved = await saveTemplates(assetType, entries);
-      showToast({ kind: 'ok', msg: `已保存 ${saved} 条模板` });
-      // Drop the successfully saved items so the list only keeps unlabeled/unsaved.
-      setSlots(prev => prev.filter(s => s.name.trim() === ''));
+      const { saved, skipped } = await saveTemplates(assetType, entries);
+      const msg = skipped.length > 0
+        ? `已保存 ${saved} 条，跳过 ${skipped.length} 条（已标注）`
+        : `已保存 ${saved} 条模板`;
+      showToast({ kind: 'ok', msg });
+      // Drop any slot whose name was in this save batch (saved or skipped) —
+      // the user already made a decision on it.
+      const handled = new Set(entries.map(e => e.name));
+      setSlots(prev => prev.filter(s => !handled.has(s.name)));
+      // Refresh labeled state so newly-saved names show as 已标注 in dropdowns.
+      refreshNames();
     } catch (err) {
       showToast({ kind: 'err', msg: `保存失败: ${String(err)}` });
     } finally {
@@ -249,10 +294,49 @@ export default function App() {
             {namesErr
               ? `获取名称失败: ${namesErr}`
               : names.length > 0
-              ? `${names.length} 个可选名称`
+              ? `${names.length} 个可选名称（${names.filter(n => n.labeled).length} 个已标注）`
               : '加载名称中…'}
           </span>
+          {labeledNames.length > 0 && (
+            <button
+              onClick={() => setShowLabeled(v => !v)}
+              className="ml-auto text-xs text-neutral-400 hover:text-neutral-200 underline decoration-dotted underline-offset-2"
+            >
+              {showLabeled ? '隐藏' : '查看/管理'}已标注 ({labeledNames.length})
+            </button>
+          )}
         </div>
+
+        {showLabeled && labeledNames.length > 0 && (
+          <div className="border border-neutral-800 rounded p-3 bg-neutral-900/30">
+            <div className="text-xs text-neutral-500 mb-2">
+              点缩略图下方的 [删除] 来撤销标注。删除后可重新标注同一名字。
+            </div>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-3">
+              {labeledNames.map(n => (
+                <div
+                  key={n.name}
+                  className="bg-neutral-950 border border-neutral-800 rounded p-1.5 flex flex-col items-center gap-1"
+                >
+                  <img
+                    src={templateImageUrl(assetType, n.name)}
+                    alt={n.name}
+                    className="w-full h-16 object-contain bg-neutral-900 rounded"
+                  />
+                  <div className="text-[11px] text-neutral-200 truncate w-full text-center" title={n.name}>
+                    {n.name}
+                  </div>
+                  <button
+                    onClick={() => doDelete(n.name)}
+                    className="text-[10px] text-red-400 hover:text-red-300 hover:underline"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-3">
           <input
@@ -321,8 +405,8 @@ export default function App() {
                 >
                   <option value="">— 跳过 —</option>
                   {names.map(n => (
-                    <option key={n} value={n}>
-                      {n}
+                    <option key={n.name} value={n.name}>
+                      {n.labeled ? `${n.name}（已标注）` : n.name}
                     </option>
                   ))}
                 </select>

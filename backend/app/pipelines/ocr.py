@@ -43,12 +43,12 @@ _NUM_RE = re.compile(r"^\s*([0-9][0-9,]*)\+?\s*$")
 
 CONFIDENCE_THRESHOLD = 0.8
 # Lower floor at which a "clean" digit string is still trustable. RapidOCR
-# tends to score synthetic / cv2.putText text around 0.6-0.75 even when it
-# reads the digits correctly; the design doc's 0.8 cutoff was calibrated for
-# PaddleOCR which we couldn't install. We keep the 0.8 strict path for
-# "was-there-text-here" judgement but accept a lower confidence when the text
-# unambiguously parses to a positive integer / quantity.
-PARSEABLE_CONFIDENCE_FLOOR = 0.5
+# scores multi-digit text around 0.6-0.75 and single isolated digits around
+# 0.25-0.5 (the detector is less confident on narrow single characters). We
+# accept as low as 0.3 because `parse_quantity_string` strictly requires a
+# digits-only match — even low-confidence non-digit noise won't parse, so
+# the regex provides the real safety net.
+PARSEABLE_CONFIDENCE_FLOOR = 0.3
 
 
 def parse_quantity_string(raw: str) -> int | None:
@@ -59,6 +59,7 @@ def parse_quantity_string(raw: str) -> int | None:
     - Comma-separated: "1,234" → 1234
     - Plus-suffix (capped display): "9999+" → 9999
     - 万 (10,000) unit: "3万" → 30000, "1.2万" → 12000
+    - Leading junk from split OCR detections: ".80" → 80, "Lv.80" → 80
     - Empty / garbage: → None
     """
     if not raw or not raw.strip():
@@ -75,6 +76,13 @@ def parse_quantity_string(raw: str) -> int | None:
     if num_match:
         digits = num_match.group(1).replace(",", "")
         return int(digits)
+
+    # Fallback: OCR sometimes returns leading punctuation / letters (e.g.
+    # ".80", "Lv.80", "*80") when the engine splits "Lv.80" into pieces.
+    # Pull out the first run of digits.
+    leading_digits = re.search(r"\d[\d,]*", raw)
+    if leading_digits:
+        return int(leading_digits.group(0).replace(",", ""))
 
     return None
 
@@ -110,24 +118,48 @@ def ocr_digits(image: np.ndarray) -> tuple[str, float]:
 
     Uses rapidocr-onnxruntime as the backend (lazy init on first call).
     Returns ("", 0.0) when no text is detected.
+
+    We pass relaxed detection params (`text_score`, `box_thresh`,
+    `unclip_ratio`) because the defaults reject isolated single digits like
+    "1" or "5" on game quantity cards — the detector thinks a narrow single
+    glyph isn't a text region. With the defaults, `engine(qr)` sometimes
+    returns None even when the digit is clearly visible; the looser params
+    produce a stable ~0.5 confidence result. The safety net is still
+    `parse_quantity_string` which rejects non-digit strings.
     """
     engine = _get_engine()
-    result, _elapse = engine(image)
+    result, _elapse = engine(
+        image, text_score=0.1, box_thresh=0.1, unclip_ratio=3.0
+    )
 
     if not result:
         return "", 0.0
 
-    # result is a list of [box, text, str(confidence)]
-    # Pick the detection with the highest confidence
+    # Loose detection thresholds give us multiple detections per slot. Prefer
+    # a detection that *contains* digits (e.g. "90" or "Lv.90") over one
+    # that's just a label ("LV."), then tie-break by confidence. This avoids
+    # both:
+    #   (a) returning only "LV." and dropping the number (levels OCR)
+    #   (b) concatenating spurious digit detections from elsewhere in the
+    #       crop, which produced nonsense like "3090" or "20202"
+    import re
+    _DIGIT = re.compile(r"\d")
+
     best_text = ""
     best_conf = 0.0
+    best_has_digit = False
     for _box, text, conf_str in result:
         try:
             conf = float(conf_str)
         except (ValueError, TypeError):
             conf = 0.0
-        if conf > best_conf:
-            best_conf = conf
-            best_text = text
+        has_digit = bool(_DIGIT.search(text))
+        # Prefer digit-containing texts; within a tier, higher conf wins.
+        better = (
+            (has_digit and not best_has_digit)
+            or (has_digit == best_has_digit and conf > best_conf)
+        )
+        if better:
+            best_text, best_conf, best_has_digit = text, conf, has_digit
 
     return best_text, best_conf

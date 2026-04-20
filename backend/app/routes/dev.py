@@ -10,6 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from PIL import Image
 from pydantic import BaseModel
 
@@ -36,6 +37,34 @@ def _asset_json_path(asset_type: str) -> Path:
 
 def _asset_subdir_path(asset_type: str) -> Path:
     return _assets_dir() / asset_type
+
+
+def _labeled_json_path(asset_type: str) -> Path:
+    """Tracker of names that have been captured via the labeling tool.
+    Kept separate from `{asset_type}.json` so the shipped name→file mapping
+    isn't mistaken for user-captured state."""
+    return _assets_dir() / f"{asset_type}.labeled.json"
+
+
+def _load_labeled(asset_type: str) -> set[str]:
+    path = _labeled_json_path(asset_type)
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return {str(x) for x in data}
+        return set()
+    except Exception:
+        return set()
+
+
+def _save_labeled(asset_type: str, labeled: set[str]) -> None:
+    path = _labeled_json_path(asset_type)
+    path.write_text(
+        json.dumps(sorted(labeled), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _validate_asset_type(asset_type: str) -> None:
@@ -70,7 +99,8 @@ def _scale_color(bgr: np.ndarray) -> np.ndarray:
 
 @router.get("/{asset_type}/names")
 async def list_names(asset_type: str):
-    """Return the list of valid names (keys) from {asset_type}.json."""
+    """Return valid names + whether each has already been captured by the
+    labeling tool. Shape: {"names": [{"name": str, "labeled": bool}, ...]}."""
     _validate_asset_type(asset_type)
     json_path = _asset_json_path(asset_type)
     if not json_path.exists():
@@ -83,7 +113,42 @@ async def list_names(asset_type: str):
         raise HTTPException(
             status_code=500, detail=f"Failed to read {asset_type}.json: {e}"
         )
-    return {"names": list(mapping.keys())}
+    labeled = _load_labeled(asset_type)
+    return {
+        "names": [
+            {"name": n, "labeled": n in labeled} for n in mapping.keys()
+        ]
+    }
+
+
+@router.get("/{asset_type}/templates/{name}/image")
+async def get_template_image(asset_type: str, name: str):
+    """Serve the raw PNG of a labeled template so the label-tool can preview
+    existing captures. 404 if missing."""
+    _validate_asset_type(asset_type)
+    path = _asset_subdir_path(asset_type) / f"{name}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"no template for {name}")
+    return FileResponse(path, media_type="image/png")
+
+
+@router.delete("/{asset_type}/templates/{name}")
+async def delete_template(asset_type: str, name: str):
+    """Remove a previously-captured template: deletes the PNG file and drops
+    the name from `{asset_type}.labeled.json`. The `{asset_type}.json` name-
+    mapping is intentionally left alone (its path will simply 404 on load)."""
+    _validate_asset_type(asset_type)
+    labeled = _load_labeled(asset_type)
+    if name not in labeled:
+        raise HTTPException(
+            status_code=404, detail=f"{name} is not labeled"
+        )
+    png_path = _asset_subdir_path(asset_type) / f"{name}.png"
+    if png_path.exists():
+        png_path.unlink()
+    labeled.discard(name)
+    _save_labeled(asset_type, labeled)
+    return {"deleted": name}
 
 
 @router.post("/{asset_type}/extract-slots")
@@ -172,8 +237,15 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
 
     subdir.mkdir(parents=True, exist_ok=True)
 
+    labeled = _load_labeled(asset_type)
     saved = 0
+    skipped: list[str] = []
+    newly_labeled: set[str] = set()
+
     for entry in req.entries:
+        if entry.name in labeled:
+            skipped.append(entry.name)
+            continue
         try:
             png_bytes = base64.b64decode(entry.icon_base64, validate=True)
         except (binascii.Error, ValueError) as e:
@@ -196,11 +268,14 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
                 detail=f"Failed to write PNG for {entry.name}",
             )
         mapping[entry.name] = f"{asset_type}/{entry.name}.png"
+        newly_labeled.add(entry.name)
         saved += 1
 
-    json_path.write_text(
-        json.dumps(mapping, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    if newly_labeled:
+        json_path.write_text(
+            json.dumps(mapping, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _save_labeled(asset_type, labeled | newly_labeled)
 
-    return {"saved": saved}
+    return {"saved": saved, "skipped": skipped}

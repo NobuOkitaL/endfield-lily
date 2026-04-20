@@ -9,27 +9,18 @@ CANVAS_H = 1080
 
 def load_and_normalize(img: np.ndarray) -> np.ndarray:
     """
-    Normalize input image to a 1080p grayscale canvas.
-    - Converts BGR/RGB to grayscale (OpenCV uses BGR by default).
-    - Scales keeping aspect ratio so the result has height = 1080
-      when the input is ≤16:9, otherwise width = 1920.
-    """
-    if img.ndim == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img
+    Normalize input image to a 1080p color canvas (BGR, 3-channel).
 
-    h, w = gray.shape
-    # Decide scale: fit by height or width, keep aspect
-    scale_by_h = CANVAS_H / h
-    scale_by_w = CANVAS_W / w
-    # Use the smaller scale to avoid cropping when aspect diverges from 16:9;
-    # this matches the behavior of "fit inside canvas" sizing.
-    scale = min(scale_by_h, scale_by_w)
+    Color is preserved so downstream matching can use hue to disambiguate
+    structurally-identical items that only differ by tint (e.g., the three
+    EXP 作战记录 tiers). If the input is single-channel, it is promoted to
+    3-channel by replication. Scaling keeps aspect ratio so height = 1080
+    for ≤16:9 inputs, else width = 1920.
+    """
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    h, w = img.shape[:2]
+    scale = min(CANVAS_H / h, CANVAS_W / w)
     new_w = int(round(w * scale))
     new_h = int(round(h * scale))
-    resized = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # For exact 16:9 inputs this will be 1920x1080; for 4:3 inputs, 1440x1080.
-    # Tests below assert the expected shapes.
-    return resized
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)

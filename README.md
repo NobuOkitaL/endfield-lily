@@ -14,9 +14,9 @@
 
 | 依赖 | 版本 |
 |------|------|
-| **Node.js** | 20+ ｜
-| **pnpm** | 最新 ｜
-| **Python** | 3.11+｜
+| **Node.js** | 20+ 
+| **pnpm** | 最新 
+| **Python** | 3.11+
 
 首次运行时会：
 - 创建 Python venv 并装依赖（~3-5 分钟，含 opencv-python / rapidocr-onnxruntime / numpy / fastapi 等）
@@ -98,17 +98,24 @@ uvicorn app.main:app --reload --port 8000
 
 ### 截图识别（后端）
 
-- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认
-- **干员列表截图** → 自动识别干员与当前等级（其他成长维度仍需手动填）
-- **武器列表截图** → 自动识别武器与当前等级（通过 `POST /recognize/weapons`，与干员识别同一套 pipeline）
+- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认；三档 EXP 作战记录（初级 / 中级 / 高级）现在靠颜色区分而不会全部塌成同一个模板
+- **干员列表截图** → 自动识别干员与当前等级；等级文字（`Lv.XX`）用多裁剪 OCR（底部 0.30 / 0.40 / 0.50 / 0.60 各试一次，取解析出数字最多的那次），能识别单独的 "1" / "5" 这类 OCR 默认丢掉的孤立单数字
+- **武器列表截图** → 同一条干员 pipeline，`POST /recognize/weapons`
 - **多图上传 + 去重**：三种识别入口都支持一次拖多张图，后端串行处理（UI 显示 `PROCESSING 2/5...`），前端 `logic/recognition-merge.ts` 按 id 去重（材料/干员/武器），数值字段取 `max`，bbox 和置信度跟随置信度更高的那次观察
-- **置信度分级**：OCR 置信度 ≥ 0.8 直接采信；0.5-0.8 之间仅在能 clean-parse 为合法数字时采信；< 0.5 标记 unknown
-- **图标匹配**：pixelmatch 风格的 RGBA 每像素 L1 差值（从 `arkntools/depot-recognition` 移植，MIT），100×100 BGRA 缩略图；模板与待测图走同一条 `_normalize_thumbnail`（中央 84% 裁剪去掉外框、5×5 高斯模糊、白方块遮住右下数量区、圆形 alpha mask），置信度 = `1 - diff_ratio`，阈值 0.80
+- **置信度分级**：OCR 置信度 ≥ 0.8 直接采信；0.3-0.8 之间仅在能 clean-parse 为合法数字时采信；否则 unknown
+- **图标匹配**：pixelmatch 风格的 RGBA 每像素 L1 差值（从 `arkntools/depot-recognition` 移植，MIT），100×100 BGRA 缩略图；模板与待测图走**对称的** `_normalize_thumbnail`（5×5 高斯模糊、右下数量区盖白方块、圆形 alpha mask），per-pixel 阈值 **0.05**（原 depot-recognition 默认 0.2 会把 3 档作战记录的色差当作 0 差），match 阈值 0.80
+- **未知条目预填**：强模板匹配 + OCR 失败的格子落到 `items`（数量/等级=0，让用户手改）；弱匹配才落 `unknowns`，并附 `best_guess_*` 字段给前端下拉预选
 - **后端完全无状态**：所有用户数据存于浏览器 `localStorage`，后端重启不丢任何数据
 
-#### 当前限制（模板）
+#### 识别模板标注进度
 
-识别 pipeline 本身已就绪，但**仓库内现在装的模板图是 end.wiki 的英雄渲染图**（3D 图标 + 透明背景），它们与游戏内真实格子截图的外观不是像素级对齐的，所以真实截图的置信度经常落在 0.36-0.44。要让识别真能用，得用下面的 **label-tool** 从真实游戏截图里重新采模板。
+识别只对**已标注**的资产起作用。未标注条目会掉到 `unknowns` 带一个低置信度最佳猜测，用户手动确认。当前采集进度：
+
+- **材料**：19 / 36 已标注（53%）
+- **干员**：9 / 26 已标注（35%）
+- **武器**：1 / 68 已标注（1%）
+
+已标注列表见 `backend/app/assets/{materials,operators,weapons}.labeled.json`（与出货的 name→file 映射分开，只记开发者自采状态）。
 
 ### 模板标注工具 · label-tool
 
@@ -120,7 +127,15 @@ pnpm install
 pnpm dev          # http://localhost:5174
 ```
 
-端口固定 `5174`（主前端 5173、后端 8000），`strictPort: true`。UX：选资产类型（材料 / 干员 / 武器）→ 上传游戏截图 → 每个检测到的格子显示裁剪图 + 候选名下拉 → 批量保存。后端接口走 `backend/app/routes/dev.py`（`POST /dev/{asset_type}/extract-slots` / `POST /dev/{asset_type}/save-templates` / `GET /dev/{asset_type}/names`，`asset_type ∈ {materials, operators, weapons}`），保存时会写 PNG 到 `backend/app/assets/{asset_type}/{name}.png` 并更新对应 JSON。
+端口固定 `5174`（主前端 5173、后端 8000），`strictPort: true`。UX：选资产类型（材料 / 干员 / 武器）→ 上传游戏截图 → 每个检测到的格子显示裁剪图 + 候选名下拉 → 批量保存。候选下拉对**已标注**的名字加 `（已标注）`后缀，工具栏显示总数 / 已标注计数。"查看/管理已标注"折叠面板列出缩略图 + 单条删除按钮（误标可以撤）。后端接口走 `backend/app/routes/dev.py`：
+
+- `POST /dev/{asset_type}/extract-slots` — 切格子返回 bbox + base64
+- `POST /dev/{asset_type}/save-templates` — 写 PNG 到 `backend/app/assets/{asset_type}/{name}.png`，已存在于 tracker 的条目跳过（返回 `{saved, skipped[]}`）
+- `GET /dev/{asset_type}/names` — 返回 `[{name, labeled}]`
+- `GET /dev/{asset_type}/templates/{name}/image` — 预览已标注 PNG
+- `DELETE /dev/{asset_type}/templates/{name}` — 删除 PNG 并从 tracker 移除
+
+`asset_type ∈ {materials, operators, weapons}`。开发者采集状态单独存在 `backend/app/assets/{asset_type}.labeled.json`，与出货的 name→file 映射分开，不会污染 shipped data。
 
 ## 运行测试
 
@@ -130,7 +145,7 @@ pnpm dev          # http://localhost:5174
 cd frontend && pnpm test
 ```
 
-后端（45 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点）：
+后端（51 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点含删除）：
 
 ```bash
 cd backend && source .venv/bin/activate && pytest -v

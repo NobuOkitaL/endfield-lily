@@ -2,6 +2,70 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-20（晚些时候）· 识别管线总大修 + 标注工具成型
+
+前一轮把框架搭起来了（pixelmatch 算法 + 三个端点 + label-tool scaffold），但真跑真截图，识别仍然一塌糊涂：三档作战记录塌成一坨、干员 Lv 被 Otsu 截掉、单数字永远识别不到、模板归一化居然是不对称的…… 一次把级联 bug 全拔掉，现在识别（对已标注资产）真能用了。
+
+### Template matching（`template_match.py`）
+
+- **对称归一化**：老代码 `_normalize_thumbnail` 对模板做了中央 84% 裁剪、对 query 没做 —— 模板相对流水线格子被放大了，精细特征永远错位。去掉 `is_template` 参数 + `_TEMPLATE_OUTER_FRAME_CROP` 常量，两边走一样的流程
+- **per-pixel 阈值 0.2 → 0.05**（L1 从 153 → 38）。depot-recognition 默认的 0.2 会把三档作战记录（初级/中级/高级，只差 ~20-30/channel 的色相）直接当 0 差；0.05 保住这种细微色差
+
+### Color pipeline（`preprocess.py`）
+
+- `load_and_normalize` 返回 **BGR 3 通道**（原先灰度）。同形状不同 tint 的卡（例如三档 EXP）主要靠色相区分，灰度化之后区分不开
+- 单通道输入自动通过复制升到 BGR
+- 下游 `detect_slots` 内部再转灰度给 Otsu 用，对 caller 透明
+- 测试断言从 shape `(1080, 1920)` → `(1080, 1920, 3)`
+
+### Slot detection（`grid_detect.py`）
+
+- **Otsu 方向自适应**：canvas mean > 145（干员 / 武器 roster 背景偏亮）就切 `THRESH_BINARY_INV`，让深色卡成为前景；否则走原路径。库存继续走原路径
+- **长宽比放宽** `[0.8, 1.25]` → `[0.6, 1.5]`，容纳 ~0.74 的高干员 / 武器肖像卡，同时保留 ~1.0 的方形库存格
+- **中位数 outlier 过滤**：slot 落在 `[0.6×, 1.4×] × 中位数` 外面就丢或拆。合并在一起的 supercell（Otsu 把两张卡糊成一个 blob）按中位数尺寸拆成子 bbox，和已保留的 slot 去重
+- 新 helper `p75_height(slots)` 返回高度 75 分位数。`operators.py` / `weapons.py` 用它**把等级 OCR 区向下延伸**—— Otsu 有时会在卡片肖像 / 稀有度条交界处截断，把 "Lv.XX" 裁掉。模板匹配仍走原 bbox，保证已标注模板继续能对上
+
+### OCR（`ocr.py`）
+
+- 放宽 rapidocr detection 参数：`text_score=0.1, box_thresh=0.1, unclip_ratio=3.0`。默认值对孤立单数字太严了 —— 单独的 "1" / "5" 根本不会被识别成文字（engine 返回 None）。放宽之后单字能以 ~0.3-0.5 conf 出来
+- `PARSEABLE_CONFIDENCE_FLOOR` 0.5 → 0.3，把这些单数字 detection 放进来。真正的安全网是 `parse_quantity_string` 的严格数字正则
+- `ocr_digits` 偏好**含数字的 detection**（如 "90"）胜过纯 label（如 "LV."）。老实现是"最高 confidence 胜"，"LV." conf 往往比数字高，结果数字被丢掉。不用拼接方案（试过，库存会出 "20202"）
+- `parse_quantity_string` 新 fallback：前导标点场景（`.80` → 80），救那些 OCR 把 "Lv.80" 切成 "LV" + ".80" 的情况
+
+### Route pipelines（`inventory.py` / `operators.py` / `weapons.py`）
+
+- **多裁剪 OCR**：底部 0.30 / 0.40 / 0.50 / 0.60 各试一次，取**解析出数字最多**的那次（同数按 conf 高胜）。没有通吃的比例：太紧会截掉尾数（`202` → `20`），太宽会把图标剪影也 OCR 掉
+- `match_slot(..., threshold=0.0)` 总是填 best-guess，再在外层手动应用 0.80 阈值。未知格子不再默认掉成下拉第一项，而是预选 best-guess
+- **强匹配（conf ≥ 0.80）+ OCR 失败** → 现在落 `items`（quantity/level=0，让用户手改），以前错误地落 `unknowns`。只有弱匹配才去 `unknowns`
+- `UnknownSlot` / `UnknownOpSlot` / `UnknownWeaponSlot` 新增 `best_guess_quantity` / `best_guess_level`；前端 `InventoryResultEditor` 读这俩预填下拉。conf ≥ 0.8 默认选 best-guess，否则默认选新增的 "— 不导入 —"（跳过条目不会导入）
+
+### Labeling tool（`label-tool/` + `dev.py`）
+
+已经从 "能采就行" 长成一个可用的小工具：
+
+- `DELETE /dev/{asset_type}/templates/{name}` — 删 PNG + 从 `{asset_type}.labeled.json` 摘名字，让误标可以撤
+- `GET /dev/{asset_type}/templates/{name}/image` — FileResponse PNG 做预览
+- UI 加"查看/管理已标注"折叠面板：缩略图网格 + 每条删除按钮
+- `GET /dev/{asset_type}/names` 返回 `[{name, labeled}]`，下拉对已标注名字加 `（已标注）`后缀；工具栏显示 `总数 / 已标注` 计数
+- `POST /dev/{asset_type}/save-templates` 现在跳过 tracker 里已存在的条目，返回 `{saved, skipped[]}`
+- **Tracker 与 shipped mapping 分开**：`{asset_type}.labeled.json` 只记开发者采集状态，和 shipped 的 `name → file` 映射互不污染
+
+### 顺手修的老 bug
+
+- **干员头像一堆不对**：洛茜（1392×1392 全身立绘）、庄方宜（150×210）、汤汤（144×144）、大潘（120×117）—— 从 end.wiki `character-card-list` CDN 重新下 120×120 标准版。这些是之前 manual avatar fetch 漏掉的，scraper 本身不下图片
+- `.gitignore` 补：`.specstory/`、`.claude/`、`*.log`、`.env.*`（带 `!.env.example` 逃生口）
+
+### 已知限制
+
+- 识别只对**已标注**资产起作用。未标注条目走 `unknowns` + best-guess 提示，用户手动确认。当前覆盖：材料 19/36（53%）/ 干员 9/26（35%）/ 武器 1/68（1%）
+- 有些特别窄的图标（极小或极细长条）切格子仍会出问题
+- 多图 merge 对数量字段取 `max`（没有"最近"概念，多张图同一材料以最大值为准）
+
+### 测试计数
+
+- 前端 **84 passing**（不变）
+- 后端 **49 → 51**（+2 dev 删除模板测试）
+
 ## 2026-04-20 · 识别 pipeline 大修 + 武器识别 + label-tool
 
 ### 识别算法换成 pixelmatch 风格
@@ -173,12 +237,13 @@
 
 - **repo**：`NobuOkitaL/endfield-lily`（本地目录仍 `ZMD/`）
 - **前端测试**：84 passing
-- **后端测试**：45 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints）
+- **后端测试**：51 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints 含删除）
 - **TypeScript**：clean（tsc --noEmit）
 - **页面**：首页 / 规划 / 库存 / 干员 / 武器 / 基质 / 识别 / 设置（8 个）
-- **独立工具**：`label-tool/`（端口 5174，用于重采模板）
+- **独立工具**：`label-tool/`（端口 5174，已有删除 / 预览 / 标注进度显示）
 - **数据**：26 干员 / 68 武器 / 39 材料 / 486 行 DATABASE / 7 张能量淤积点
-- **识别算法**：pixelmatch 风格 RGBA L1 diff（confidence = 1 - diff_ratio, 阈值 0.80）
+- **识别算法**：pixelmatch 风格 RGBA L1 diff，对称归一化，per-pixel 阈值 0.05，color BGR pipeline，自适应 Otsu，多裁剪 OCR（max-digits 启发式），best-guess 预填
+- **标注进度**：材料 19/36 · 干员 9/26 · 武器 1/68
 - **字体**：Anton + Hanken Grotesk + JetBrains Mono
 - **色板**：Signal Yellow + Military Green + Alert Red + Canvas `#0a0a0a`
 

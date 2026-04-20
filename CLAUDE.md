@@ -17,18 +17,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Work dir: `backend/`. Activate venv: `source backend/.venv/bin/activate`.
 - Dev server: `uvicorn app.main:app --port 8000 --reload`
-- Tests: `pytest` (45 tests across pipeline modules, endpoint integration, weapons endpoint, dev-label endpoints)
+- Tests: `pytest` (51 tests across pipeline modules, endpoint integration, weapons endpoint, dev-label endpoints incl. delete)
 - One-command launch both: `./start.sh` at repo root
 
 Endpoints currently registered:
 - `POST /recognize/inventory` · `POST /recognize/operators` · `POST /recognize/weapons`
-- `POST /dev/{asset_type}/extract-slots` · `POST /dev/{asset_type}/save-templates` · `GET /dev/{asset_type}/names` (see `routes/dev.py`; `asset_type ∈ {materials, operators, weapons}`; used by `label-tool/`)
+- `POST /dev/{asset_type}/extract-slots` · `POST /dev/{asset_type}/save-templates` · `GET /dev/{asset_type}/names` · `GET /dev/{asset_type}/templates/{name}/image` · `DELETE /dev/{asset_type}/templates/{name}` (see `routes/dev.py`; `asset_type ∈ {materials, operators, weapons}`; used by `label-tool/`)
 
-OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; this is the documented fallback). Tiered OCR confidence: ≥0.8 trust, 0.5–0.8 trust only if parses cleanly, <0.5 unknown.
+OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; this is the documented fallback). Rapidocr detection params relaxed (`text_score=0.1, box_thresh=0.1, unclip_ratio=3.0`) so isolated single digits ("1" / "5") make it through — defaults dropped them entirely. Confidence floor for parsing is **0.3** (was 0.5); `parse_quantity_string`'s strict digit regex is the real safety net, and it now also rescues leading-punctuation splits like `.80` → 80 (from OCR breaking "Lv.80" into "LV" + ".80"). `ocr_digits` prefers digit-containing detections over label-only (was "highest confidence wins", which dropped the digit when "LV." scored higher).
 
-Template matching was swapped from `cv2.matchTemplate(TM_CCOEFF_NORMED)` on grayscale to a **pixelmatch-style per-pixel RGBA L1 diff on 100×100 BGRA thumbnails** (ported from `arkntools/depot-recognition`, MIT). Templates and queries both go through `_normalize_thumbnail`: central-84% crop (templates only), 5×5 Gaussian blur, 100×100 `INTER_CUBIC`, white rect over quantity region `(x=20,y=72,w=60,h=22)`, circular alpha mask. `match_slot` returns confidence `= 1 - diff_ratio` (higher-is-better preserved); default threshold is **0.80**. `load_and_normalize` still grayscales — long-term it should go full color; flag if you touch it.
+**Recognition algorithm (current picture)**:
+- **Template match** (`template_match.py`) — pixelmatch-style RGBA L1 diff on 100×100 BGRA thumbnails (ported from `arkntools/depot-recognition`, MIT). `_normalize_thumbnail` is **symmetric** for templates and queries (old asymmetric central-84% crop + `is_template` param removed): 5×5 Gaussian blur, 100×100 `INTER_CUBIC`, white rect over quantity region `(x=20,y=72,w=60,h=22)`, circular alpha mask. **Per-pixel threshold 0.05** (was 0.2 from depot-recognition default — collapsed tier-colored EXP cards 初级/中级/高级 to zero diff). `match_slot` returns `confidence = 1 - diff_ratio`; match threshold **0.80**.
+- **Color pipeline** (`preprocess.py`) — `load_and_normalize` now returns **BGR 3-channel** (was grayscale); color hue is the primary discriminator between same-shape / different-tint cards. Single-channel input gets promoted to BGR by replication. `detect_slots` internally grayscales for Otsu (transparent to callers).
+- **Adaptive Otsu** (`grid_detect.py`) — if canvas mean > 145 (operator / weapon rosters have light backgrounds), use `THRESH_BINARY_INV` so darker cards become foreground; else normal threshold. Inventory stays on the original path. Aspect ratio widened `[0.8, 1.25]` → `[0.6, 1.5]` to admit tall operator portraits (~0.74) alongside square inventory slots (~1.0). Median-based outlier filter drops or splits slots outside `[0.6×, 1.4×] × median`. New `p75_height(slots)` returns the 75th-percentile height — `operators.py` / `weapons.py` use it to **extend the OCR level-text region downward** because Otsu sometimes crops tall cards at the portrait / rarity-strip boundary, losing "Lv.XX" (template matching still uses the original bbox so labeled templates keep matching).
+- **Multi-crop OCR** (inventory / operators / weapons routes) — try bottom 0.30 / 0.40 / 0.50 / 0.60 crops, pick max-digits parse (tie-break by higher confidence). No single ratio works universally: tight crops drop trailing digits, wide crops catch icon silhouettes.
+- **Best-guess surfacing** — `match_slot(threshold=0.0)` always populates best guess; strong match (≥0.80) with failed OCR now goes to `items` with quantity/level=0 (was wrongly routed to `unknowns`). Only weak matches fall to `unknowns`, which carry `best_guess_quantity` / `best_guess_level` for frontend dropdown prefill. A "— 不导入 —" option lets users skip rows.
 
-**Known template gap**: shipped templates are end.wiki hero renders, not pixel-aligned with real in-game slot cards, so confidence on real screenshots hovers ~0.36-0.44. Re-capturing via `label-tool/` is the intended fix; don't chase this with threshold tweaks.
+**Labeled-tracker design**: `backend/app/assets/{asset_type}.labeled.json` is kept **separate** from the shipped name→file mapping. It only records which names the dev has captured real-game templates for; the shipped mapping ships with end.wiki renders. `save-templates` skips entries already in the tracker (returns `{saved, skipped[]}`). The label-tool UI reads both to show progress counters and `（已标注）` suffixes.
+
+Recognition only works for labeled assets — anything else gets a low-confidence best-guess in `unknowns`. Current coverage: materials 19/36, operators 9/26, weapons 1/68.
 
 ## Commands
 

@@ -2,18 +2,19 @@
 """
 Template matching for material / operator / weapon slot icons.
 
-This is a port of the approach used by arkntools/depot-recognition (MIT):
-normalize both template and query to a 100x100 BGRA thumbnail by the
-*same* pipeline (central-region crop → Gaussian blur → resize → quantity
-mask → circular mask), then compare as a pixelmatch-style per-pixel RGB
-diff ratio.  Pixels where either side is transparent are skipped, so the
-quantity-text region and rarity-frame corners never enter the comparison.
+Port of arkntools/depot-recognition (MIT): normalize both template and query
+to a 100x100 BGRA thumbnail by the *same symmetric* pipeline (Gaussian blur
+→ resize → quantity mask → circular mask), then compare as a pixelmatch-
+style per-pixel RGB diff ratio. Pixels where either side is transparent are
+skipped, so the quantity-text region and rarity-frame corners never enter
+the comparison.
 
-Semantics of MatchResult.confidence:
-    confidence = 1.0 - diff_ratio
-so higher is better and a threshold like 0.80 corresponds to roughly
-"at most 20% of compared pixels disagree significantly."  This preserves
-the >= threshold convention callers already use.
+Templates MUST come from the labeling tool (crops of in-game slot icons at
+pipeline scale). Original static end.wiki PNGs with external rarity frames
+will not match well — they get fed through the same no-crop normalization
+as slots, so the frame pixels pollute the diff.
+
+Semantics of MatchResult.confidence: confidence = 1.0 - diff_ratio.
 """
 from __future__ import annotations
 
@@ -37,14 +38,12 @@ _THUMB_SIZE = 100
 # to both template and query keeps the pixel comparison symmetric.
 DEFAULT_QUANTITY_MASK = (20, 72, 60, 22)  # (x, y, w, h)
 
-# Fraction of each edge to crop off when loading a raw game asset (PNG) that
-# includes the rarity frame around the icon.  Query slots coming off the
-# pipeline are already cropped to the icon region and skip this step.
-_TEMPLATE_OUTER_FRAME_CROP = 0.08  # → keep central 84% (8% off each side)
-
 # Per-pixel threshold (fraction of 255*3) above which an L1 RGB difference
-# counts as "this pixel disagrees."
-_PIXEL_DIFF_THRESHOLD = 0.2
+# counts as "this pixel disagrees." depot-recognition uses 0.2, but Endfield's
+# tier-colored cards (e.g. 初/中/高级作战记录) differ by only ~20-30 per
+# channel — well below the 153 L1 cutoff at 0.2 — so 初级 and 高级 collapse
+# to identical. 0.05 (≈38 L1) preserves these subtle hue differences.
+_PIXEL_DIFF_THRESHOLD = 0.05
 
 # If the gap between best and second-best diff ratio is under this, the
 # match is flagged ambiguous (depot-recognition's signal).
@@ -85,31 +84,17 @@ def _to_bgra(img: np.ndarray) -> np.ndarray:
 def _normalize_thumbnail(
     img: np.ndarray,
     *,
-    is_template: bool = False,
     quantity_mask: tuple[int, int, int, int] = DEFAULT_QUANTITY_MASK,
 ) -> np.ndarray:
     """
     Produce a 100x100 BGRA uint8 thumbnail for pixel-diff comparison.
 
-    - is_template=True: input is a raw game asset with an outer rarity frame;
-      crop the central (1 - 2*_TEMPLATE_OUTER_FRAME_CROP) region first.
-    - is_template=False: input is already a slot crop from the pipeline
-      (no frame to remove); skip the outer crop.
-
-    Alpha channel is set so pixels are transparent (0) outside the inscribed
-    circle OR inside the quantity mask rect; opaque (255) otherwise.  That
-    way _diff_ratio naturally skips those pixels.
+    Symmetric pipeline — applied identically to templates and query slots.
+    Alpha is set so pixels are transparent (0) outside the inscribed circle
+    OR inside the quantity mask rect; opaque (255) otherwise. _diff_ratio
+    naturally skips those pixels.
     """
     bgra = _to_bgra(img)
-
-    if is_template:
-        h, w = bgra.shape[:2]
-        cx0 = int(w * _TEMPLATE_OUTER_FRAME_CROP)
-        cx1 = int(w * (1.0 - _TEMPLATE_OUTER_FRAME_CROP))
-        cy0 = int(h * _TEMPLATE_OUTER_FRAME_CROP)
-        cy1 = int(h * (1.0 - _TEMPLATE_OUTER_FRAME_CROP))
-        if cx1 > cx0 and cy1 > cy0:
-            bgra = bgra[cy0:cy1, cx0:cx1]
 
     # Gaussian blur kills JPEG / compression noise before resize.
     blurred = cv2.GaussianBlur(bgra, (5, 5), 0)
@@ -181,12 +166,10 @@ class TemplateLibrary:
 
     def __init__(self, templates: dict[str, np.ndarray] | None = None):
         # Pre-normalize everything at construction time so match_slot is
-        # pure pixel math.  In-memory templates are treated as slot-shaped
-        # (no outer frame) — this mirrors how the endpoint tests build the
-        # library from pipeline slot crops.
+        # pure pixel math.
         self._templates: dict[str, np.ndarray] = {}
         for name, arr in (templates or {}).items():
-            self._templates[name] = _normalize_thumbnail(arr, is_template=False)
+            self._templates[name] = _normalize_thumbnail(arr)
 
     @classmethod
     def from_directory(
@@ -197,19 +180,18 @@ class TemplateLibrary:
         """
         Load templates from a directory using a JSON mapping {name: rel_path}.
         Paths are resolved relative to ``assets_dir.parent`` (the mapping
-        values look like ``"materials/foo.png"``).  PNGs are loaded with
-        alpha preserved and normalized via the is_template=True path so the
-        rarity-frame outer ring is cropped off before comparison.
+        values look like ``"materials/foo.png"``). PNGs should be in-game
+        slot crops from the labeling tool (same shape as pipeline slots).
         """
         mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
         lib = cls.__new__(cls)
         lib._templates = {}
         for name, rel in mapping.items():
-            path = assets_dir.parent / rel  # rel is like "materials/xxx.png"
+            path = assets_dir.parent / rel
             img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
             if img is None:
                 continue
-            lib._templates[name] = _normalize_thumbnail(img, is_template=True)
+            lib._templates[name] = _normalize_thumbnail(img)
         return lib
 
     def items(self):
@@ -241,7 +223,7 @@ def match_slot(
     if len(library) == 0:
         return MatchResult(material_id=None, confidence=0.0)
 
-    query = _normalize_thumbnail(slot, is_template=False, quantity_mask=quantity_mask)
+    query = _normalize_thumbnail(slot, quantity_mask=quantity_mask)
 
     best_id: str | None = None
     best_diff: float = float("inf")

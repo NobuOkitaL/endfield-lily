@@ -1,13 +1,13 @@
 {
   "洛茜": "operators/op_000.png",
-  "汤汤": "operators/op_001.png",
-  "伊冯": "operators/op_002.png",
-  "余烬": "operators/op_003.png",
-  "别礼": "operators/op_004.png",
-  "洁尔佩塔": "operators/op_005.png",
+  "汤汤": "operators/汤汤.png",
+  "伊冯": "operators/伊冯.png",
+  "余烬": "operators/余烬.png",
+  "别礼": "operators/别礼.png",
+  "洁尔佩塔": "operators/洁尔佩塔.png",
   "管理员": "operators/op_006.png",
-  "艾尔黛拉": "operators/op_007.png",
-  "莱万汀": "operators/op_008.png",
+  "艾尔黛拉": "operators/艾尔黛拉.png",
+  "莱万汀": "operators/莱万汀.png",
   "骏卫": "operators/op_009.png",
   "黎风": "operators/op_010.png",
   "佩丽卡": "operators/op_011.png",
@@ -16,7 +16,7 @@
   "昼雪": "operators/op_014.png",
   "狼卫": "operators/op_015.png",
   "艾维文娜": "operators/op_016.png",
-  "赛希": "operators/op_017.png",
+  "赛希": "operators/赛希.png",
   "阿列什": "operators/op_018.png",
   "陈千语": "operators/op_019.png",
   "卡契尔": "operators/op_020.png",
@@ -24,5 +24,5 @@
   "安塔尔": "operators/op_022.png",
   "秋栗": "operators/op_023.png",
   "萤石": "operators/op_024.png",
-  "庄方宜": "operators/op_025.png"
+  "庄方宜": "operators/庄方宜.png"
 }

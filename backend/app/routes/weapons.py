@@ -11,7 +11,7 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
-from app.pipelines.grid_detect import detect_slots
+from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import ocr_digits, parse_ocr_result
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
@@ -65,6 +65,8 @@ async def recognize_weapons(image: UploadFile = File(...)):
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
     slots = detect_slots(canvas)
+    canvas_h = canvas.shape[0]
+    target_h = p75_height(list(slots))
 
     library = _load_library()
     items: list[dict] = []
@@ -72,37 +74,52 @@ async def recognize_weapons(image: UploadFile = File(...)):
 
     for bbox in slots:
         x, y, w, h = bbox
-        # Upper 70% for icon, lower 30% for level text (same layout as operators)
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
-        level_region = canvas[y + icon_h : y + h, x : x + w]
 
-        match = match_slot(icon, library, threshold=0.80)
+        eff_h = min(max(h, target_h), canvas_h - y)
+        # Multi-crop OCR on the level text (same pattern as inventory / operators).
+        candidates: list[tuple[int, float, str, int]] = []
+        first_rt, first_cf = "", 0.0
+        for crop_frac in (0.70, 0.60, 0.50, 0.40):
+            region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
+            rt, cf = ocr_digits(region)
+            stripped = _strip_lv_prefix(rt)
+            if not first_rt:
+                first_rt, first_cf = rt, cf
+            lv = parse_ocr_result(stripped, cf)
+            if lv is not None and lv > 0:
+                candidates.append((len(str(lv)), cf, rt, lv))
+        if candidates:
+            candidates.sort(reverse=True)
+            _n, conf, raw_text, level = candidates[0]
+        else:
+            raw_text, conf, level = first_rt, first_cf, None
 
-        raw_text, conf = ocr_digits(level_region)
-        stripped = _strip_lv_prefix(raw_text)
-        level = parse_ocr_result(stripped, conf)
+        best = match_slot(icon, library, threshold=0.0)
+        above_threshold = best.confidence >= 0.80
 
-        if match.material_id is None or level is None:
+        if not above_threshold:
             _, buf = cv2.imencode(".png", canvas[y : y + h, x : x + w])
             thumb_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
             unknowns.append(
                 {
                     "bbox": _bbox_to_list(bbox),
                     "icon_thumbnail_base64": thumb_b64,
-                    "best_guess_weapon_id": match.material_id,
-                    "best_guess_confidence": match.confidence,
+                    "best_guess_weapon_id": best.material_id,
+                    "best_guess_confidence": best.confidence,
                     "raw_ocr_text": raw_text,
+                    "best_guess_level": level,
                 }
             )
             continue
 
         items.append(
             {
-                "weapon_id": match.material_id,
-                "name": match.material_id,
-                "level": level,
-                "confidence": match.confidence,
+                "weapon_id": best.material_id,
+                "name": best.material_id,
+                "level": level if level is not None else 0,
+                "confidence": best.confidence,
                 "bbox": _bbox_to_list(bbox),
             }
         )

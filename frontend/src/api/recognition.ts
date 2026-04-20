@@ -18,6 +18,7 @@ export interface UnknownSlot {
   best_guess_material_id: string | null;
   best_guess_confidence: number;
   raw_ocr_text: string;
+  best_guess_quantity: number | null;
 }
 
 export interface InventoryResponse {
@@ -43,6 +44,7 @@ export interface UnknownOpSlot {
   best_guess_operator_id: string | null;
   best_guess_confidence: number;
   raw_ocr_text: string;
+  best_guess_level: number | null;
 }
 
 export interface OperatorsResponse {
@@ -68,6 +70,7 @@ export interface UnknownWeaponSlot {
   best_guess_weapon_id: string | null;
   best_guess_confidence: number;
   raw_ocr_text: string;
+  best_guess_level: number | null;
 }
 
 export interface WeaponsResponse {

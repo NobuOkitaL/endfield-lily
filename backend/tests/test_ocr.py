@@ -69,14 +69,16 @@ class TestParseOcrResult:
         assert parse_ocr_result("500", 0.80) == 500
 
     def test_mid_band_parseable_still_accepted(self):
-        # 0.5 ≤ confidence < 0.8 AND parseable → trust the parse
-        # (rescues RapidOCR's lower scores on clean digits)
+        # 0.3 ≤ confidence < 0.8 AND parseable → trust the parse
+        # (rescues RapidOCR's lower scores on clean digits, including single
+        # isolated digits where the detector confidence can be ~0.3-0.5)
         assert parse_ocr_result("500", 0.6) == 500
         assert parse_ocr_result("1,234", 0.7) == 1234
+        assert parse_ocr_result("1", 0.35) == 1
 
     def test_below_floor_returns_none(self):
-        # < 0.5 is rejected regardless of parse success
-        assert parse_ocr_result("500", 0.49) is None
+        # < 0.3 is rejected regardless of parse success
+        assert parse_ocr_result("500", 0.29) is None
         assert parse_ocr_result("500", 0.0) is None
 
     def test_mid_band_unparseable_returns_none(self):

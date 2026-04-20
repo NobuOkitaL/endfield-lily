@@ -20,18 +20,28 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
     () => Object.fromEntries(result.items.map((item) => [item.material_id, item.quantity])),
   );
 
-  // Editable unknowns: each has a chosen material name + quantity
-  const [unknownMaterials, setUnknownMaterials] = useState<Record<number, MaterialName>>(
+  // Editable unknowns: each has a chosen material name ('' means skip) + qty.
+  // Default dropdown: trust best_guess only when its confidence ≥ 0.8, same
+  // as the backend's match threshold. Below that we keep it as '' so the
+  // user has to explicitly pick before the row imports anything.
+  const CONFIDENT_BEST_GUESS = 0.8;
+  const [unknownMaterials, setUnknownMaterials] = useState<Record<number, MaterialName | ''>>(
     () =>
       Object.fromEntries(
-        result.unknowns.map((u, i) => [
-          i,
-          (u.best_guess_material_id as MaterialName | null) ?? MATERIAL_COLUMNS[0],
-        ]),
+        result.unknowns.map((u, i) => {
+          const confident = u.best_guess_confidence >= CONFIDENT_BEST_GUESS;
+          const name: MaterialName | '' = confident && u.best_guess_material_id
+            ? (u.best_guess_material_id as MaterialName)
+            : '';
+          return [i, name];
+        }),
       ),
   );
   const [unknownQuantities, setUnknownQuantities] = useState<Record<number, number>>(
-    () => Object.fromEntries(result.unknowns.map((_, i) => [i, 0])),
+    () =>
+      Object.fromEntries(
+        result.unknowns.map((u, i) => [i, u.best_guess_quantity ?? 0]),
+      ),
   );
 
   function handleApply() {
@@ -120,15 +130,16 @@ export function InventoryResultEditor({ result, onApplied }: InventoryResultEdit
                   />
                 )}
                 <select
-                  value={unknownMaterials[i] ?? MATERIAL_COLUMNS[0]}
+                  value={unknownMaterials[i] ?? ''}
                   onChange={(e) =>
                     setUnknownMaterials((prev) => ({
                       ...prev,
-                      [i]: e.target.value as MaterialName,
+                      [i]: e.target.value as MaterialName | '',
                     }))
                   }
                   className="flex-1 bg-[#1e1e1e] border border-white/20 rounded-sm px-2 py-1 font-sans text-white text-sm focus:outline-none focus:border-signal"
                 >
+                  <option value="">— 不导入 —</option>
                   {MATERIAL_COLUMNS.map((name) => (
                     <option key={name} value={name}>
                       {name}
