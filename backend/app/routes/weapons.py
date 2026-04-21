@@ -64,7 +64,9 @@ async def recognize_weapons(image: UploadFile = File(...)):
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
-    slots = detect_slots(canvas)
+    # 5 is the kernel the user's labeled templates were captured with;
+    # changing it here invalidates those labels.
+    slots = detect_slots(canvas, close_kernel=5)
     canvas_h = canvas.shape[0]
     target_h = p75_height(list(slots))
 

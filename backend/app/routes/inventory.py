@@ -57,7 +57,9 @@ async def recognize_inventory(image: UploadFile = File(...)):
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
-    slots = detect_slots(canvas)
+    # 武陵仓库 main-grid slots are small (~68px); 7×7 close kernel surfaces
+    # them reliably without over-merging neighbors.
+    slots = detect_slots(canvas, close_kernel=7)
 
     library = _load_library()
     items: list[dict] = []

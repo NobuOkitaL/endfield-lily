@@ -21,9 +21,18 @@ router = APIRouter(prefix="/dev", tags=["dev"])
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
-_MIN_SLOT_DIM = 100
+# Minimum slot dimension (px) on the 1080p normalized canvas. 贵重品库 slots
+# are ~147px but 武陵仓库 main-grid slots are ~68px, so we floor at 50 to let
+# both pass. Anything below 50 is almost certainly UI chrome / noise.
+_MIN_SLOT_DIM = 50
 
 _VALID_ASSET_TYPES = {"materials", "operators", "weapons"}
+
+# Close-kernel size per asset type. 武陵仓库 (materials) has small slots
+# (~68px) that need a 7×7 to surface, but operator / weapon cards were
+# labelled at the 5×5 geometry — changing their kernel invalidates
+# already-captured templates, so we pin them to 5.
+_CLOSE_KERNEL_BY_ASSET = {"materials": 7, "operators": 5, "weapons": 5}
 
 
 def _assets_dir() -> Path:
@@ -161,7 +170,7 @@ async def extract_slots(asset_type: str, image: UploadFile = File(...)):
     bgr = _decode_upload(raw)
     color_canvas = _scale_color(bgr)
     gray_canvas = cv2.cvtColor(color_canvas, cv2.COLOR_BGR2GRAY)
-    slots = detect_slots(gray_canvas)
+    slots = detect_slots(gray_canvas, close_kernel=_CLOSE_KERNEL_BY_ASSET[asset_type])
 
     slots_sorted = sorted(slots, key=lambda b: (b[1], b[0]))
 

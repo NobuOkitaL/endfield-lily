@@ -68,7 +68,9 @@ async def recognize_operators(image: UploadFile = File(...)):
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
-    slots = detect_slots(canvas)
+    # 5 is the kernel the user's labeled templates were captured with;
+    # changing it here invalidates those labels.
+    slots = detect_slots(canvas, close_kernel=5)
     canvas_h = canvas.shape[0]
     # Otsu sometimes crops operator cards right at the portrait/rarity-strip
     # boundary, losing the "Lv.XX" text below. Extend the OCR region down to

@@ -22,26 +22,69 @@ _MAX_AREA_RATIO = 0.25  # reject contours that span too much of the canvas
 _LIGHT_BG_MEAN = 145
 
 # Median-based outlier handling. Only kicks in with ≥4 slots.
-# - Oversized boxes (w/h > 1.4× median) are likely merged "super slots" from Otsu
-#   gluing adjacent cards together; we split them into sub-cells sized at the
-#   median so the underlying items aren't lost.
+# - Oversized boxes (w/h > 1.9× median) are merged "super slots" from Otsu
+#   gluing adjacent cards; split them into sub-cells sized at the median.
 # - Undersized boxes (w/h < 0.6× median) are fragments; drop them.
+# - 1.9× (not 1.4×) so screens with two grid regions of different slot sizes
+#   (e.g. 武陵仓库 main grid 68px + 背包 panel 98px, ratio 1.44) both pass.
+#   Real super-slots are ≥2× in a dimension — the 1.9 ceiling still catches
+#   those while tolerating dual-grid screens.
 _MEDIAN_OUTLIER_MIN_COUNT = 4
-_MEDIAN_W_MAX = 1.4
+_MEDIAN_W_MAX = 1.9
 _MEDIAN_W_MIN = 0.6
+
+# Split-validity bounds for `_split_super_slot`. When Otsu glues adjacent
+# cards into one oversized blob, ``round(w/median)`` / ``round(h/median)``
+# tells us the presumed cell count. But we must distinguish *real* grid
+# merges (where ratios are near integers like 2.0, 2.2) from *non-grid*
+# blobs that happen to be big — e.g. the in-game 3D scene visible outside
+# an open dialog on 武陵仓库 can produce a single huge contour whose ratios
+# are 3.4 / 4.4 and have no internal grid structure. Splitting such a blob
+# fabricates N×M ghost sub-cells that pollute the result.
+#
+# Rules:
+#   - ``_SPLIT_MAX_RATIO``: ratios above this (>3 along either axis) are not
+#     legitimate grid merges — drop the blob. Real merges are typically 2×N
+#     or N×2 because cards that far apart aren't in the same connected blob.
+#   - ``_SPLIT_RATIO_TOLERANCE``: fractional deviation between the float
+#     ratio and the rounded integer cell count. 0.35 admits the common
+#     ~2.33 ratio (see test_splits_oversized_merged_slot_into_subcells where
+#     Otsu+close grows a 260px blob to 280px on a 120px median = 2.33) while
+#     still rejecting the 3.4/4.4 case.
+_SPLIT_MAX_RATIO = 3.0
+_SPLIT_RATIO_TOLERANCE = 0.35
 
 
 def _split_super_slot(
     bbox: "BBox", median_w: float, median_h: float
 ) -> list["BBox"]:
-    """Split a merged super-slot into N×M sub-cells of median size. If the box
-    isn't clearly a multi-cell merge (both dims round to 1 cell), return it
-    unchanged."""
+    """Split a merged super-slot into N×M sub-cells of median size.
+
+    Guards against false splits on non-grid blobs (e.g. game-world region
+    visible outside an open dialog on 武陵仓库): requires both ratios to be
+    bounded (≤ ``_SPLIT_MAX_RATIO``) and at least one dimension to be a
+    near-integer multiple of the median cell pitch
+    (``±_SPLIT_RATIO_TOLERANCE``). Blobs failing either test return ``[]``
+    so they're discarded rather than materialized as N×M ghost sub-cells.
+
+    If the rounded cell count is 1×1, the original bbox is returned.
+    """
     x, y, w, h = bbox
-    nc = max(1, round(w / median_w))
-    nr = max(1, round(h / median_h))
+    nc_f = w / median_w
+    nr_f = h / median_h
+    nc = max(1, round(nc_f))
+    nr = max(1, round(nr_f))
     if nc <= 1 and nr <= 1:
         return [bbox]
+    # Reject blobs too large in either dimension to plausibly be a merged
+    # grid of cells — they're almost certainly non-grid content.
+    if nc_f > _SPLIT_MAX_RATIO or nr_f > _SPLIT_MAX_RATIO:
+        return []
+    # Require at least one dimension to be a clean near-integer multiple.
+    col_clean = abs(nc - nc_f) <= _SPLIT_RATIO_TOLERANCE
+    row_clean = abs(nr - nr_f) <= _SPLIT_RATIO_TOLERANCE
+    if not (col_clean or row_clean):
+        return []
     sw = w / nc
     sh = h / nr
     subs: list[BBox] = []
@@ -57,10 +100,16 @@ def _split_super_slot(
 BBox = tuple[int, int, int, int]
 
 
-def detect_slots(img: np.ndarray) -> list[BBox]:
+def detect_slots(img: np.ndarray, close_kernel: int = 5) -> list[BBox]:
     """
     Detect grid slots as roughly-square regions brighter than the canvas.
     Returns list of (x, y, w, h) in image coordinates.
+
+    ``close_kernel`` picks the size of the MORPH_CLOSE structuring element. The
+    caller chooses: 7 for small-slot screens like 武陵仓库 (≈68px slots), 5 for
+    larger cards like operators / weapons which were labelled at that geometry
+    (changing the kernel changes the detected bbox size, invalidating existing
+    labeled template captures). Default 5 preserves legacy behavior.
     """
     if img.ndim == 3:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -70,8 +119,7 @@ def detect_slots(img: np.ndarray) -> list[BBox]:
     # darker than the bg — invert so the cards become the foreground blobs.
     thresh_type = cv2.THRESH_BINARY_INV if gray.mean() > _LIGHT_BG_MEAN else cv2.THRESH_BINARY
     _, binary = cv2.threshold(gray, 0, 255, thresh_type + cv2.THRESH_OTSU)
-    # Close small gaps so each slot is a single contour
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (close_kernel, close_kernel))
     closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
