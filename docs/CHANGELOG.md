@@ -2,6 +2,49 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-22 · label-tool 手动标注模式 + 拖拽上传 + 武陵仓库幽灵格修复
+
+真跑几张 dual-panel 截图发现自动切格子有硬伤（3D 场景被拆成幽灵 4×4 子格 / 顶排亮水晶卡 Otsu 直接检测不到），而且批量改的过程里命名卡滚一屏外看不见也点不到。这轮一次把采集流程和切格子算法的盲区都补上。
+
+### label-tool（`label-tool/src/App.tsx`）
+
+- **拖拽上传**：整页接 drop，全屏绿色虚线 overlay + "松开以加入 …" 提示，非图片文件 toast 驳回；拖入文件追加而不是替换
+- **手动标注模式**：顶部加 `自动提取 | 手动标注` toggle，默认保持自动
+  - 上传一张图 → 画 1:1 正方形框（`size = max(|dx|, |dy|)`，4 象限都支持）
+  - 已画框支持：**选中**（点内部）、**移动**（选中后内部拖）、**缩放**（4 角 10×10px handle，对角固定，保持正方）、**删除**（`Delete` / `Backspace`；对 `INPUT/TEXTAREA` 目标直接 return，所以 NameCombobox 里按 Delete 不会误删）、**取消选中**（`Escape`）
+  - 交互做成 `Interaction` 判别联合（`idle | drawing | moving | resizing`），`onPointerDown` 先 hit-test handle 再 hit-test 框内再退化为画新框
+  - 缩放控件：`50% / 100% / 适应宽度`（默认适应宽度，`ResizeObserver` 追 viewport）
+  - 所有 box 坐标始终存**图片空间**（不是显示空间），渲染时乘 `zoomValue`
+- **两段式流程**：画完框后点 `开始命名 (N) →` 进命名页。原先把命名卡挂在画布下方，截图一大就滚不到看不见、点不动——双页之后每页各自独占视口
+  - 命名页：大缩略图 grid（`h-[120px]`），每张卡 `NameCombobox` + 移除 × + 编号。点缩略图跳回画框页并选中对应框，方便修正
+  - 命名页保存成功：已保存的框从列表掉出来，全保完就清图 + 切回画框页等下一张
+- **100×100 存档尺寸**：前端 canvas `drawImage(img, imgX, imgY, imgSize, imgSize, 0, 0, 100, 100)` 直接裁 100×100 PNG 再 POST。和 backend `_normalize_thumbnail` 目标尺寸一致，省一步 resize、避免任意尺寸引入的混乱
+
+### 切格子（`grid_detect.py::_split_super_slot`）
+
+- 新增 `_SPLIT_MAX_RATIO = 3.0` + `_SPLIT_RATIO_TOLERANCE = 0.35` 两个守卫。真游戏里合并的 supercell 最多 2×N，比例在 1.95-2.05 之间；3D 场景这种**非 grid** blob 比例会是 3.39 × 4.44 这种非整数，老代码 `round()` 把它硬拆成 3×4 + 去重后 materialize 出 16 个幽灵 4×4 子格
+- 武陵仓库截图检出从 37 (含 16 幽灵) → 25 slot，**每个 bbox 都对应真实卡片**。用户报的「标注页面提取了一堆空白 / 背景条纹」就是这批幽灵
+- **已知剩余限制**：武陵仓库顶排亮色水晶卡 Otsu 在 t=128 无法从面板底板（~158 gray）里分出卡背景（~134 gray），CLAHE / adaptive / dual-polarity 全试过都不如原 Otsu。这部分就交给手动标注模式
+
+### 文档同步
+
+- `label-tool/README.md` 从"单 workflow"改成两种 mode 各自讲一遍
+- `README.md` / `CLAUDE.md` 更新 label-tool 说明 + 当前标注覆盖率
+- `backend/README.md` 从老 2-endpoint 版本全量重写为 7-endpoint + tracker 说明
+
+### 标注覆盖率
+
+批量用手动模式采了一批真截图模板：
+
+- 材料：19/36 → **34/36**（+15，94%）
+- 干员：9/26 不变
+- 武器：1/68 → **20/68**（+19，29%）
+
+### 测试计数
+
+- 前端 **84 passing**（不变）
+- 后端 **55 passing**（不变）
+
 ## 2026-04-20（晚些时候）· 识别管线总大修 + 标注工具成型
 
 前一轮把框架搭起来了（pixelmatch 算法 + 三个端点 + label-tool scaffold），但真跑真截图，识别仍然一塌糊涂：三档作战记录塌成一坨、干员 Lv 被 Otsu 截掉、单数字永远识别不到、模板归一化居然是不对称的…… 一次把级联 bug 全拔掉，现在识别（对已标注资产）真能用了。
@@ -247,23 +290,24 @@
 - 库存页、干员页、武器页、规划页、规划详情 dialog 全部接通
 - 端末地迁移后补抓了 3 张新图（庄方宜 / 孤舟 / 雾中微光），改名的 2 件也拉了新版（显锋 / O.B.J.迅极）
 
-## 当前状态快照（2026-04-20）
+## 当前状态快照（2026-04-22）
 
 - **repo**：`NobuOkitaL/endfield-lily`（本地目录仍 `ZMD/`）
 - **前端测试**：84 passing
-- **后端测试**：51 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints 含删除）
+- **后端测试**：55 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints 含删除 + /state 跨浏览器同步）
 - **TypeScript**：clean（tsc --noEmit）
 - **页面**：首页 / 规划 / 库存 / 干员 / 武器 / 基质 / 识别 / 设置（8 个）
-- **独立工具**：`label-tool/`（端口 5174，已有删除 / 预览 / 标注进度显示）
+- **独立工具**：`label-tool/`（端口 5174；双模式：自动提取 + 手动标注 w/ drag-and-drop / move / resize / 两段式 draw→name）
 - **数据**：26 干员 / 68 武器 / 39 材料 / 486 行 DATABASE / 7 张能量淤积点
-- **识别算法**：pixelmatch 风格 RGBA L1 diff，对称归一化，per-pixel 阈值 0.05，color BGR pipeline，自适应 Otsu，多裁剪 OCR（max-digits 启发式），best-guess 预填
-- **标注进度**：材料 19/36 · 干员 9/26 · 武器 1/68
+- **识别算法**：pixelmatch 风格 RGBA L1 diff，对称归一化，per-pixel 阈值 0.05，color BGR pipeline，自适应 Otsu（含 supercell 拆分守卫 `_SPLIT_MAX_RATIO=3.0` / `_SPLIT_RATIO_TOLERANCE=0.35`），多裁剪 OCR（max-digits 启发式），best-guess 预填
+- **标注进度**：材料 34/36 · 干员 9/26 · 武器 20/68
 - **字体**：Anton + Hanken Grotesk + JetBrains Mono
 - **色板**：Signal Yellow + Military Green + Alert Red + Canvas `#0a0a0a`
 
 ## Backlog
 
-- **用 label-tool 采一批真实截图模板**，再跑识别回归（这是当前识别"能不能实际用"的主要阻塞）
+- 干员 / 武器剩下的真游戏截图模板还没采完（干员 9/26、武器 20/68）；材料已经 34/36
+- 武陵仓库顶排亮色水晶卡的 Otsu 阈值瓶颈（Canny+Hough 或面板区域定位 + 格子推断是正确路径，改动大）
 - `load_and_normalize` 改走全色（目前仍先灰度）
 - 真实截图 fixture（库存 ≥10 张 / 干员列表 ≥5 张 / 武器列表 ≥5 张）做识别回归
 - `基建` / `装备适配` / `信赖` 的 end.wiki 边界值回归（当前只做了 spot check）

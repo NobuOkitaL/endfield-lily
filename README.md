@@ -112,9 +112,9 @@ uvicorn app.main:app --reload --port 8000
 
 识别只对**已标注**的资产起作用。未标注条目会掉到 `unknowns` 带一个低置信度最佳猜测，用户手动确认。当前采集进度：
 
-- **材料**：19 / 36 已标注（53%）
+- **材料**：34 / 36 已标注（94%）
 - **干员**：9 / 26 已标注（35%）
-- **武器**：1 / 68 已标注（1%）
+- **武器**：20 / 68 已标注（29%）
 
 已标注列表见 `backend/app/assets/{materials,operators,weapons}.labeled.json`（与出货的 name→file 映射分开，只记开发者自采状态）。
 
@@ -128,7 +128,12 @@ pnpm install
 pnpm dev          # http://localhost:5174
 ```
 
-端口固定 `5174`（主前端 5173、后端 8000），`strictPort: true`。UX：选资产类型（材料 / 干员 / 武器）→ 上传游戏截图 → 每个检测到的格子显示裁剪图 + 候选名下拉 → 批量保存。候选下拉对**已标注**的名字加 `（已标注）`后缀，工具栏显示总数 / 已标注计数。"查看/管理已标注"折叠面板列出缩略图 + 单条删除按钮（误标可以撤）。后端接口走 `backend/app/routes/dev.py`：
+端口固定 `5174`（主前端 5173、后端 8000），`strictPort: true`。顶部有两种模式：
+
+- **自动提取**：批量 workflow。拖放多张截图到任意位置 → `POST /dev/{asset}/extract-slots` 切格子 → 每格选名 → 批量保存。候选下拉对**已标注**的名字加 `（已标注）`后缀，工具栏显示总数 / 已标注计数
+- **手动标注**：单图 workflow。适合自动检测不给力的界面（武陵仓库双面板 / 低对比度顶排水晶卡等）。上传一张图 → 画 1:1 正方形框（支持移动、角 handle 缩放、`Delete` / `Backspace` 删除、`Escape` 取消选中）→ 进命名页（大缩略图 grid）→ 保存。前端 canvas 裁 100×100 PNG 再 POST，和 backend 的 `_normalize_thumbnail` 目标尺寸一致
+
+"查看/管理已标注"折叠面板列出缩略图 + 单条删除按钮（误标可以撤）。两种模式共用后端接口（`backend/app/routes/dev.py`）：
 
 - `POST /dev/{asset_type}/extract-slots` — 切格子返回 bbox + base64
 - `POST /dev/{asset_type}/save-templates` — 写 PNG 到 `backend/app/assets/{asset_type}/{name}.png`，已存在于 tracker 的条目跳过（返回 `{saved, skipped[]}`）

@@ -1,6 +1,6 @@
 # ZMD Backend
 
-截图识别后端。提供 `/recognize/inventory` 和 `/recognize/operators` 两个 endpoint。
+截图识别后端 + 跨浏览器状态同步。FastAPI + OpenCV + rapidocr-onnxruntime。
 
 ## 启动
 
@@ -10,19 +10,42 @@ source .venv/bin/activate
 uvicorn app.main:app --port 8000 --reload
 ```
 
-访问 `http://localhost:8000/docs` 看自动生成的 OpenAPI 文档。
+访问 `http://localhost:8000/docs` 看自动生成的 OpenAPI 文档。一条命令同起前后端见仓库根的 `node start.mjs` / `./start.sh`。
 
 ## 测试
 
 ```bash
-pytest -v
+pytest -v     # 55 个单测：pipeline 模块 + 三个 recognize endpoint + dev 标注端点（含删除）+ /state
 ```
+
+## 端点
+
+### 识别
+
+- `POST /recognize/inventory` — 库存截图 → `{items[], unknowns[]}`
+- `POST /recognize/operators` — 干员列表截图 → `{items[], unknowns[]}`
+- `POST /recognize/weapons` — 武器列表截图 → `{items[], unknowns[]}`
+
+### 跨浏览器状态同步
+
+- `GET /state` — 返回 `{data, updated_at}`（空时也 200）
+- `PUT /state` — 原子写入 `backend/app/data/state.json`（gitignored）
+
+### 模板标注（供 `label-tool/` 使用）
+
+`asset_type ∈ {materials, operators, weapons}`：
+
+- `POST /dev/{asset_type}/extract-slots` — 切格子返回 bbox + base64 图标
+- `POST /dev/{asset_type}/save-templates` — 写 PNG 到 `app/assets/{asset_type}/{name}.png`
+- `GET /dev/{asset_type}/names` — 返回 `[{name, labeled}]`
+- `GET /dev/{asset_type}/templates/{name}/image` — 预览已标注 PNG
+- `DELETE /dev/{asset_type}/templates/{name}` — 删除 PNG 并从 tracker 移除
 
 ## OCR 引擎
 
-本项目使用 `rapidocr-onnxruntime`（PaddleOCR 模型 + ONNX Runtime 推理）。
-PaddlePaddle 不支持 Python 3.14 / Apple Silicon 的组合，因此使用 rapidocr 作为替代。
-首次运行时 rapidocr 会自动下载 ONNX 模型文件（~50MB），请保证网络畅通。
+`rapidocr-onnxruntime`（PaddleOCR 模型 + ONNX Runtime 推理）。PaddlePaddle 不支持 Python 3.14，所以用 rapidocr 作为替代。首次运行时会自动下载 ONNX 模型文件（~50MB），需要网络。
+
+detection 参数放宽（`text_score=0.1, box_thresh=0.1, unclip_ratio=3.0`），让孤立单数字（"1" / "5"）能被识别到。
 
 ## 首次安装
 
@@ -33,16 +56,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 素材资源 (app/assets/)
+## 识别素材资源（app/assets/）
 
-`app/assets/materials/*.png` 和 `app/assets/operators/*.png` 由以下脚本生成：
+- `app/assets/{materials,operators,weapons}.json` — shipped name → file 映射（包括从 end.wiki 渲染的基础素材）
+- `app/assets/{materials,operators,weapons}.labeled.json` — 开发者用真游戏截图标注过的名字集合（与 shipped mapping 分开；`save-templates` 遇到 tracker 里已有的名字会 skip）
+- `app/assets/{materials,operators,weapons}/*.png` — 实际的模板图文件
 
-```bash
-python3 scripts/import-maa-icons.py
-```
+真游戏截图模板通过 `label-tool/`（端口 5174）采集。当前覆盖：材料 34/36 · 干员 9/26 · 武器 20/68。
 
-### 来源与许可
-
-- **图标来源**：`reference/zmdgraph/images/icons/`（材料图标）和 `reference/zmdgraph/images/avatars/`（干员头像），均来自 `reference/zmdgraph`（终末地养成规划计算器，项目内参考数据）。该仓库无独立 LICENSE 文件。
-- **MaaEnd**（`reference/MaaEnd/`）：AGPL-3.0 许可，用于了解游戏识别逻辑参考；其仓库中不含单独的物品图标 PNG，识别依赖 OCR 和 class ID，故未从中复制图片资产。
-- **映射文件**：`app/assets/materials.json` 和 `app/assets/operators.json` 由同一脚本自动生成，格式为 `{ "材料名": "materials/mat_NNN.png" }`。
+详见 `../CLAUDE.md` 里 "Recognition algorithm" 一节了解当前的像素差 + 多裁剪 OCR + best-guess 预填管线。
