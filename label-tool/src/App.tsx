@@ -108,6 +108,16 @@ function templateImageUrl(assetType: AssetType, name: string, cacheBust?: number
   return cacheBust ? `${base}?t=${cacheBust}` : base;
 }
 
+function drawBoxTo100(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  box: { imgX: number; imgY: number; imgSize: number },
+): void {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, box.imgX, box.imgY, box.imgSize, box.imgSize, 0, 0, 100, 100);
+}
+
 /**
  * Compact, searchable name picker that replaces a native <select>.
  *
@@ -135,7 +145,6 @@ function NameCombobox({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  // Close on outside click.
   useEffect(() => {
     if (!open) return;
     const onDocPointerDown = (e: MouseEvent) => {
@@ -158,12 +167,10 @@ function NameCombobox({
     return matched;
   }, [names, query]);
 
-  // Reset highlight when the filter changes.
   useEffect(() => {
     setHighlight(0);
   }, [query, open]);
 
-  // Keep the highlighted item in view when navigating by keyboard.
   useEffect(() => {
     if (!open || !listRef.current) return;
     const active = listRef.current.querySelector<HTMLElement>(
@@ -243,7 +250,6 @@ function NameCombobox({
           ref={listRef}
           className="absolute z-20 top-full left-0 right-0 mt-1 bg-neutral-950 border border-neutral-700 rounded shadow-lg max-h-56 overflow-y-auto text-xs"
         >
-          {/* Sentinel "skip" row, always visible */}
           <div
             data-idx="-1"
             onMouseDown={e => {
@@ -360,9 +366,6 @@ function ManualMode({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // Resolve file → HTMLImageElement (decoded at original resolution).
-  // Also resets phase back to 'draw' so loading a fresh screenshot always
-  // lands on the drawing canvas.
   useEffect(() => {
     if (!file) {
       setImgUrl('');
@@ -666,7 +669,6 @@ function ManualMode({
     [boxes],
   );
 
-  // Crop a single box to a 100×100 PNG base64 string (no data-URL prefix).
   const cropToBase64 = useCallback(
     (box: ManualBox): string | null => {
       if (!img) return null;
@@ -675,19 +677,7 @@ function ManualMode({
       canvas.height = 100;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(
-        img,
-        box.imgX,
-        box.imgY,
-        box.imgSize,
-        box.imgSize,
-        0,
-        0,
-        100,
-        100,
-      );
+      drawBoxTo100(ctx, img, box);
       const dataUrl = canvas.toDataURL('image/png');
       const comma = dataUrl.indexOf(',');
       return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
@@ -731,7 +721,6 @@ function ManualMode({
     }
   };
 
-  // ---------- Phase 1 (draw): uploader + zoom controls + canvas ----------
   if (phase === 'draw') {
     return (
       <>
@@ -860,9 +849,8 @@ function ManualMode({
                         {i + 1}
                         {named ? ` · ${override.name}` : ''}
                       </span>
-                      {/* Corner resize handles — only on the selected box. */}
                       {isSelected &&
-                        (['nw', 'ne', 'sw', 'se'] as const).map(corner => {
+                        CORNERS.map(corner => {
                           const cursor =
                             corner === 'nw' || corner === 'se'
                               ? 'nwse-resize'
@@ -900,7 +888,6 @@ function ManualMode({
                   );
                 })}
 
-                {/* In-progress drag preview (only for new-box drawing) */}
                 {previewRect && (
                   <div
                     className="absolute border-2 border-emerald-400 bg-emerald-400/10 pointer-events-none"
@@ -917,29 +904,24 @@ function ManualMode({
           )}
         </div>
 
-        {/* Draw-phase footer: progress + "start naming" button (no save here) */}
         <footer className="border-t border-neutral-800 px-6 py-3 flex items-center gap-4 sticky bottom-0 bg-[#0b0b0b]">
           <span className="text-xs text-neutral-400">
             已画 <span className="text-emerald-300">{boxes.length}</span> 个框
           </span>
-          <div className="ml-auto flex items-center gap-3">
-            <button
-              onClick={() => setPhase('name')}
-              disabled={!img || boxes.length === 0}
-              className="px-4 py-1.5 text-sm rounded bg-emerald-400 text-neutral-950 font-medium hover:bg-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              开始命名 ({boxes.length}) →
-            </button>
-          </div>
+          <button
+            onClick={() => setPhase('name')}
+            disabled={!img || boxes.length === 0}
+            className="ml-auto px-4 py-1.5 text-sm rounded bg-emerald-400 text-neutral-950 font-medium hover:bg-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            开始命名 ({boxes.length}) →
+          </button>
         </footer>
       </>
     );
   }
 
-  // ---------- Phase 2 (name): big thumbnail grid, no original image ----------
   return (
     <>
-      {/* Top strip: back button · progress · asset-type readout */}
       <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-neutral-800">
         <button
           onClick={() => setPhase('draw')}
@@ -955,8 +937,6 @@ function ManualMode({
         </span>
       </div>
 
-      {/* Thumbnail grid — bigger (h-[120px]) than draw-phase-era slot cards
-          (h-[84px]) since this IS the primary interaction surface now. */}
       <div className="flex-1 overflow-auto bg-neutral-950/40 px-6 py-4">
         {boxes.length === 0 ? (
           <div className="text-neutral-500 text-sm py-16 text-center">
@@ -992,10 +972,6 @@ function ManualMode({
                       ×
                     </button>
                   </div>
-                  {/* Click the thumbnail area → jump back to the draw canvas
-                      with this box pre-selected, so the user can fix a
-                      mislabeled crop. Combobox + × button below stop
-                      propagation to avoid triggering this. */}
                   <div
                     onClick={() => {
                       setSelectedUid(b.uid);
@@ -1020,29 +996,22 @@ function ManualMode({
         )}
       </div>
 
-      {/* Save bar */}
       <footer className="border-t border-neutral-800 px-6 py-3 flex items-center gap-4 sticky bottom-0 bg-[#0b0b0b]">
         <span className="text-xs text-neutral-400">
           已命名 <span className="text-emerald-300">{labeledCount}</span> / {boxes.length}
         </span>
-        <div className="ml-auto flex items-center gap-3">
-          <button
-            onClick={doSave}
-            disabled={saving || labeledCount === 0 || disabled}
-            className="px-4 py-1.5 text-sm rounded bg-emerald-400 text-neutral-950 font-medium hover:bg-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {saving ? '保存中…' : `保存 ${labeledCount} 条`}
-          </button>
-        </div>
+        <button
+          onClick={doSave}
+          disabled={saving || labeledCount === 0 || disabled}
+          className="ml-auto px-4 py-1.5 text-sm rounded bg-emerald-400 text-neutral-950 font-medium hover:bg-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {saving ? '保存中…' : `保存 ${labeledCount} 条`}
+        </button>
       </footer>
     </>
   );
 }
 
-/**
- * Tiny inline thumbnail: renders the crop region of `img` into a 100×100
- * canvas so the user sees what the saved PNG will actually look like.
- */
 function ManualBoxThumb({ img, box }: { img: HTMLImageElement | null; box: ManualBox }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -1053,9 +1022,7 @@ function ManualBoxThumb({ img, box }: { img: HTMLImageElement | null; box: Manua
     const ctx = c.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, 100, 100);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, box.imgX, box.imgY, box.imgSize, box.imgSize, 0, 0, 100, 100);
+    drawBoxTo100(ctx, img, box);
   }, [img, box.imgX, box.imgY, box.imgSize]);
   return (
     <canvas
@@ -1104,7 +1071,6 @@ export default function App() {
     return cancel;
   }, [assetType, refreshNames]);
 
-  // When switching asset type, clear existing labeled slots (they're asset-type specific).
   useEffect(() => {
     setSlots([]);
     setPendingFiles([]);
@@ -1240,11 +1206,8 @@ export default function App() {
         ? `已保存 ${saved} 条，跳过 ${skipped.length} 条（已标注）`
         : `已保存 ${saved} 条模板`;
       showToast({ kind: 'ok', msg });
-      // Drop any slot whose name was in this save batch (saved or skipped) —
-      // the user already made a decision on it.
       const handled = new Set(entries.map(e => e.name));
       setSlots(prev => prev.filter(s => !handled.has(s.name)));
-      // Refresh labeled state so newly-saved names show as 已标注 in dropdowns.
       refreshNames();
     } catch (err) {
       showToast({ kind: 'err', msg: `保存失败: ${String(err)}` });
@@ -1268,7 +1231,6 @@ export default function App() {
           </div>
         </div>
       )}
-      {/* Top bar */}
       <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-4">
         <h1 className="text-lg font-semibold tracking-wide">标注工具</h1>
         <span className="text-xs text-neutral-500">终末地模板截图</span>
@@ -1289,7 +1251,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Controls */}
       <section className="px-6 py-4 border-b border-neutral-800 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-neutral-500 mr-2">资源类型</span>
@@ -1375,7 +1336,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Auto-mode file input + extract button (hidden in manual mode) */}
         {mode === 'auto' && (
           <div className="flex flex-wrap items-center gap-3">
             <input
@@ -1406,7 +1366,6 @@ export default function App() {
         )}
       </section>
 
-      {/* Mode-specific body */}
       {mode === 'auto' ? (
         <>
           <main className="flex-1 overflow-auto px-6 py-4">
