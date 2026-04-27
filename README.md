@@ -105,6 +105,7 @@ uvicorn app.main:app --reload --port 8000
 - **多图上传 + 去重**：三种识别入口都支持一次拖多张图，后端串行处理（UI 显示 `PROCESSING 2/5...`），前端 `logic/recognition-merge.ts` 按 id 去重（材料/干员/武器），数值字段取 `max`，bbox 和置信度跟随置信度更高的那次观察
 - **置信度分级**：OCR 置信度 ≥ 0.8 直接采信；0.3-0.8 之间仅在能 clean-parse 为合法数字时采信；否则 unknown
 - **图标匹配**：pixelmatch 风格的 RGBA 每像素 L1 差值（从 `arkntools/depot-recognition` 移植，MIT），100×100 BGRA 缩略图；模板与待测图走**对称的** `_normalize_thumbnail`（5×5 高斯模糊、右下数量区盖白方块、圆形 alpha mask），per-pixel 阈值 **0.05**（原 depot-recognition 默认 0.2 会把 3 档作战记录的色差当作 0 差），match 阈值 0.80
+- **格子定位**：Otsu+contour 找前景（卡内物品剪影）；对低对比度截图（如武陵仓库双面板）追加 **edge-lattice augmentation**——用 Canny 边沿做 x/y 投影找格线周期，拟合等距序列恢复完整网格，仅当 lattice 比 baseline 多至少 10 个 cell 才换用
 - **未知条目预填**：强模板匹配 + OCR 失败的格子落到 `items`（数量/等级=0，让用户手改）；弱匹配才落 `unknowns`，并附 `best_guess_*` 字段给前端下拉预选
 - **后端完全无状态**：所有用户数据存于浏览器 `localStorage`，后端重启不丢任何数据
 

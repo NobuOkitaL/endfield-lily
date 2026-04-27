@@ -2,6 +2,40 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-27 · 武陵仓库切格子根本性修复（edge-lattice augmentation）
+
+之前那张 IMG_9592 武陵仓库截图（双面板 + 顶排亮色水晶 + 底排被糊成横条）一直卡在 25/44 检出。所有调过的 Otsu 变体（RETR_CCOMP/LIST、CLAHE、adaptive、dual-polarity、recursive、width-clustering）全都回归别的截图。
+
+让 Codex（GPT-5.4）做 second opinion，给了一个**根本性不同的策略**——不是改 Otsu，而是认识到 Otsu 切的是"卡片内的物品剪影"而非"卡片边界"，然后用 edge projection + 周期性拟合来直接找格线。
+
+### 新模块 `app/pipelines/edge_lattice.py`
+
+- **算法**：用 baseline Otsu seeds 做"地标"——按 x 聚类把 seeds 分到不同 panel，每个 panel 内：
+  1. 从 seed centers 的差值估 pitch_x / pitch_y（取在 [55, 150] 范围的中位数）
+  2. 在 panel ROI 内跑 Canny（阈值 50/120），把边沿在 x/y 方向做 1D 投影
+  3. 投影上做 greedy NMS 找峰，再拟合**等距序列**（允许 ±6% pitch 抖动），匹配最多峰的序列就是真实格线
+  4. 对每个预测 cell 做 occupancy 检查：edge density > 0.035 OR HSV S P90 > 58 OR gray std > 18
+- **为什么能突破**：检测对象从"前景剪影"换成"格线周期结构"。Canny 在卡片本体和面板的过渡上仍然有响应（即使 Otsu 阈值无法分离它们），因此顶排水晶卡 / 底排被糊成横条的卡都能恢复出来
+- **selection gate** `select_better`：只有 `len(lattice) >= len(baseline) + 10 and len(lattice) <= 56` 才换用 lattice。单面板 / 已经检全的截图 lattice 自然不达标，安全 fallback
+
+### `grid_detect.py::detect_slots` 改动
+
+把原来的 Otsu 逻辑抽到 `_baseline_detect`，公共入口先跑 baseline 再走 lattice augmentation 然后 select。所有调用方（inventory / operators / weapons / dev 路由）零改动自动受益。
+
+### 验证
+
+| 截图 | baseline | edge_lattice | 实际命中 | 选择 |
+|------|---------:|-------------:|---------:|------|
+| IMG_9590 单面板贵重品库 | 29 ✓ | 0（不触发） | 29/29 | baseline |
+| IMG_9591 干员列表 | 17 ✓ | 4（不触发） | 17/17 | baseline |
+| IMG_9592 武陵仓库 | 25 ✗ | 44 ✓ | **44/44** | **lattice** |
+
+55/55 backend pytest 仍全过（synthetic grid 测试因为内容带过滤 + gate 自然不被 lattice 影响）。
+
+### 协作流程笔记
+
+这是项目里第一次把卡住的视觉算法问题甩给 Codex 做 second opinion——结论：值得。Claude 在多轮自调试后陷入"调阈值 → 回归别的图 → 撤回"循环，Codex 直接跳出 Otsu 框架提了 edge projection。互补关系明显：Claude 擅长在已知策略空间内迭代精修，Codex 擅长在卡死时给一个新框架。
+
 ## 2026-04-22 · label-tool 手动标注模式 + 拖拽上传 + 武陵仓库幽灵格修复
 
 真跑几张 dual-panel 截图发现自动切格子有硬伤（3D 场景被拆成幽灵 4×4 子格 / 顶排亮水晶卡 Otsu 直接检测不到），而且批量改的过程里命名卡滚一屏外看不见也点不到。这轮一次把采集流程和切格子算法的盲区都补上。
@@ -290,16 +324,16 @@
 - 库存页、干员页、武器页、规划页、规划详情 dialog 全部接通
 - 端末地迁移后补抓了 3 张新图（庄方宜 / 孤舟 / 雾中微光），改名的 2 件也拉了新版（显锋 / O.B.J.迅极）
 
-## 当前状态快照（2026-04-22）
+## 当前状态快照（2026-04-27）
 
 - **repo**：`NobuOkitaL/endfield-lily`（本地目录仍 `ZMD/`）
 - **前端测试**：84 passing
-- **后端测试**：55 passing（pipeline unit + inventory/operators/weapons endpoints + dev-label endpoints 含删除 + /state 跨浏览器同步）
+- **后端测试**：55 passing
 - **TypeScript**：clean（tsc --noEmit）
 - **页面**：首页 / 规划 / 库存 / 干员 / 武器 / 基质 / 识别 / 设置（8 个）
 - **独立工具**：`label-tool/`（端口 5174；双模式：自动提取 + 手动标注 w/ drag-and-drop / move / resize / 两段式 draw→name）
 - **数据**：26 干员 / 68 武器 / 39 材料 / 486 行 DATABASE / 7 张能量淤积点
-- **识别算法**：pixelmatch 风格 RGBA L1 diff，对称归一化，per-pixel 阈值 0.05，color BGR pipeline，自适应 Otsu（含 supercell 拆分守卫 `_SPLIT_MAX_RATIO=3.0` / `_SPLIT_RATIO_TOLERANCE=0.35`），多裁剪 OCR（max-digits 启发式），best-guess 预填
+- **识别算法**：pixelmatch 风格 RGBA L1 diff（对称归一化、per-pixel 阈值 0.05）+ color BGR pipeline + 自适应 Otsu（含 supercell 拆分守卫 `_SPLIT_MAX_RATIO=3.0` / `_SPLIT_RATIO_TOLERANCE=0.35`）+ **edge-lattice augmentation**（Canny + 投影周期拟合，gate `+10 / ≤56`，把武陵仓库双面板从 25 → 44 切对）+ 多裁剪 OCR（max-digits 启发式）+ best-guess 预填
 - **标注进度**：材料 34/36 · 干员 9/26 · 武器 20/68
 - **字体**：Anton + Hanken Grotesk + JetBrains Mono
 - **色板**：Signal Yellow + Military Green + Alert Red + Canvas `#0a0a0a`
@@ -307,7 +341,7 @@
 ## Backlog
 
 - 干员 / 武器剩下的真游戏截图模板还没采完（干员 9/26、武器 20/68）；材料已经 34/36
-- 武陵仓库顶排亮色水晶卡的 Otsu 阈值瓶颈（Canny+Hough 或面板区域定位 + 格子推断是正确路径，改动大）
+- ~~武陵仓库顶排亮色水晶卡的 Otsu 阈值瓶颈~~（已通过 edge-lattice augmentation 解决，2026-04-27）
 - `load_and_normalize` 改走全色（目前仍先灰度）
 - 真实截图 fixture（库存 ≥10 张 / 干员列表 ≥5 张 / 武器列表 ≥5 张）做识别回归
 - `基建` / `装备适配` / `信赖` 的 end.wiki 边界值回归（当前只做了 spot check）

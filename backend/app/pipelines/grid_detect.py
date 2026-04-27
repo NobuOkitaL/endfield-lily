@@ -6,6 +6,8 @@ import statistics
 import cv2
 import numpy as np
 
+from app.pipelines.edge_lattice import detect_slots_edge_lattice, select_better
+
 # Aspect ratio tolerance. Inventory slots are near-square (~1.0) while
 # operator / weapon portrait cards are taller (~0.74). Widen the range to
 # cover both layouts rather than requiring the caller to special-case.
@@ -110,7 +112,20 @@ def detect_slots(img: np.ndarray, close_kernel: int = 5) -> list[BBox]:
     larger cards like operators / weapons which were labelled at that geometry
     (changing the kernel changes the detected bbox size, invalidating existing
     labeled template captures). Default 5 preserves legacy behavior.
+
+    On low-contrast dual-panel screens (e.g. 武陵仓库) Otsu detects item
+    silhouettes inside cards but misses the cards themselves where the panel /
+    card gray gap is small. After the Otsu pass we try an edge-projection
+    lattice that uses the Otsu seeds to localize panels and re-segment from
+    Canny edges; ``select_better`` only swaps in the lattice result when it's
+    a clear, plausible improvement.
     """
+    baseline = _baseline_detect(img, close_kernel)
+    lattice = detect_slots_edge_lattice(img, baseline)
+    return select_better(baseline, lattice)
+
+
+def _baseline_detect(img: np.ndarray, close_kernel: int) -> list[BBox]:
     if img.ndim == 3:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     else:
