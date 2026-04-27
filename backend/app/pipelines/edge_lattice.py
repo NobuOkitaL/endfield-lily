@@ -27,14 +27,18 @@ _MIN_SEEDS_PER_GROUP = 4
 
 # Vertical band where inventory dialogs live. Filters out top/bottom UI
 # chrome (header bar, footer toolbar) before we cluster seeds into panels.
-_CONTENT_Y_MIN_RATIO = 0.16
-_CONTENT_Y_MAX_RATIO = 0.76
+# IMG_9589's first weapon row starts above the old 0.16h cutoff, and its
+# weapon panel extends lower than the inventory dialog this pass was first
+# tuned against.
+_CONTENT_Y_MIN_RATIO = 0.10
+_CONTENT_Y_MAX_RATIO = 0.85
 
 # Pitch estimation: only treat differences in this range as plausible
 # card-to-card distances. Outside it, a "pitch" is either two cards in the
-# same column (small diff) or a panel jump (large diff).
+# same column (small diff) or a panel jump (large diff). IMG_9589 weapon
+# rows are ~159px apart, so the upper bound needs to admit that layout.
 _PITCH_LO = 55.0
-_PITCH_HI = 150.0
+_PITCH_HI = 200.0
 
 # Per-cell occupancy thresholds. A predicted lattice cell counts as a real
 # card if any of these signals fire on its inset ROI:
@@ -258,18 +262,39 @@ def detect_slots_edge_lattice(img: np.ndarray, seed_slots: list[BBox]) -> list[B
     return _dedupe_boxes(cells)
 
 
-# Selection gate: only swap to lattice when it finds *materially* more
-# cells than baseline (≥ +10) and stays within a plausible inventory size
-# (≤ 56). Guards against edge_lattice firing on unrelated UI screens.
+# Selection gate: only augment baseline when lattice finds *materially* more
+# cells (≥ +10) and stays within a plausible inventory size (≤ 56). Guards
+# against edge_lattice firing on unrelated UI screens.
 _AUGMENT_MIN_GAIN = 10
 _AUGMENT_MAX_TOTAL = 56
 
 
 def select_better(baseline: list[BBox], lattice: list[BBox]) -> list[BBox]:
-    """Pick lattice over baseline only when it's a clear, plausible win."""
+    """Merge lattice additions while preserving baseline geometry.
+
+    Baseline boxes are aligned with user-labeled templates, so when lattice
+    fires we only use it to fill cells whose centers do not already overlap a
+    baseline center within half the median baseline box size.
+    """
     if (
         len(lattice) >= len(baseline) + _AUGMENT_MIN_GAIN
         and len(lattice) <= _AUGMENT_MAX_TOTAL
     ):
-        return lattice
+        if not baseline:
+            return lattice
+        median_w = float(np.median([b[2] for b in baseline]))
+        median_h = float(np.median([b[3] for b in baseline]))
+        tol_x = 0.5 * median_w
+        tol_y = 0.5 * median_h
+        baseline_centers = [_center(box) for box in baseline]
+        merged = list(baseline)
+        for cell in lattice:
+            cx, cy = _center(cell)
+            overlaps_baseline = any(
+                abs(cx - bx) <= tol_x and abs(cy - by) <= tol_y
+                for bx, by in baseline_centers
+            )
+            if not overlaps_baseline:
+                merged.append(cell)
+        return sorted(merged, key=lambda b: (b[1], b[0]))
     return baseline
