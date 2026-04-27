@@ -26,17 +26,6 @@ _WEAPON_LEVEL_CROP_FRACS = (0.84, 0.70, 0.60, 0.50, 0.40, 0.35)
 _MIN_LOW_CONF_LV1 = 0.10
 _MIN_WEAPON_LEVEL = 1
 _MAX_WEAPON_LEVEL = 90
-_DETAIL_PANEL_MIN_X_RATIO = 0.70
-_DETAIL_PANEL_MAX_Y_RATIO = 0.35
-_DETAIL_ICON_MAX_TARGET_H_RATIO = 0.85
-_DETAIL_LEVEL_REGION_SPECS = (
-    # Relative to the selected weapon icon in the right-side detail panel:
-    # dx, dy, width, height. The first region tightly frames "90 Lv /90";
-    # the others give RapidOCR a little alternate context for voting.
-    (-2.65, 2.10, 2.45, 0.95),
-    (-2.55, 2.20, 1.80, 0.75),
-    (-2.40, 1.90, 2.20, 0.90),
-)
 
 
 def _load_library() -> TemplateLibrary:
@@ -179,52 +168,6 @@ def _ocr_weapon_level(
     return raw_text, confidence, level
 
 
-def _is_weapon_detail_panel_icon(
-    canvas: np.ndarray, bbox: tuple[int, int, int, int], target_h: int
-) -> bool:
-    """Identify the small selected-weapon icon in the right detail panel."""
-    x, y, w, h = bbox
-    canvas_h, canvas_w = canvas.shape[:2]
-    return (
-        x > canvas_w * _DETAIL_PANEL_MIN_X_RATIO
-        and y < canvas_h * _DETAIL_PANEL_MAX_Y_RATIO
-        and w < target_h * _DETAIL_ICON_MAX_TARGET_H_RATIO
-        and h < target_h * _DETAIL_ICON_MAX_TARGET_H_RATIO
-    )
-
-
-def _ocr_selected_weapon_detail_level(
-    canvas: np.ndarray, bbox: tuple[int, int, int, int]
-) -> tuple[str, float, int | None]:
-    """Read the large current level text shown beside the selected weapon."""
-    x, y, w, h = bbox
-    canvas_h, canvas_w = canvas.shape[:2]
-    candidates: list[tuple[int, float, str]] = []
-    first_rt, first_cf = "", 0.0
-
-    for dx, dy, rw, rh in _DETAIL_LEVEL_REGION_SPECS:
-        left = max(0, int(x + w * dx))
-        top = max(0, int(y + h * dy))
-        right = min(canvas_w, left + max(1, int(w * rw)))
-        bottom = min(canvas_h, top + max(1, int(h * rh)))
-        region = canvas[top:bottom, left:right]
-        if region.size == 0:
-            continue
-
-        for candidate_image in (region, _prepare_weapon_level_ocr_image(region)):
-            rt, cf = ocr_digits(candidate_image)
-            if not first_rt:
-                first_rt, first_cf = rt, cf
-            level = _parse_weapon_level(rt, cf)
-            if level is not None:
-                candidates.append((level, cf, rt))
-
-    raw_text, confidence, level = _choose_weapon_level(candidates)
-    if level is None:
-        return first_rt, first_cf, None
-    return raw_text, confidence, level
-
-
 @router.post("/weapons")
 async def recognize_weapons(image: UploadFile = File(...)):
     """
@@ -260,12 +203,6 @@ async def recognize_weapons(image: UploadFile = File(...)):
         above_threshold = best.confidence >= 0.80
 
         raw_text, conf, level = _ocr_weapon_level(canvas, bbox, target_h)
-        if (
-            above_threshold
-            and level is None
-            and _is_weapon_detail_panel_icon(canvas, bbox, target_h)
-        ):
-            raw_text, conf, level = _ocr_selected_weapon_detail_level(canvas, bbox)
 
         if not above_threshold:
             _, buf = cv2.imencode(".png", canvas[y : y + h, x : x + w])

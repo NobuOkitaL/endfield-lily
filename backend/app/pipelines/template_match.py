@@ -38,6 +38,11 @@ _THUMB_SIZE = 100
 # to both template and query keeps the pixel comparison symmetric.
 DEFAULT_QUANTITY_MASK = (20, 72, 60, 22)  # (x, y, w, h)
 
+# Default selected-operator avatar mask rect in the 100x100 thumbnail space.
+# Weapon cards can render the owning operator's round portrait over the
+# top-right corner; masking it symmetrically keeps real icon pixels comparable.
+DEFAULT_AVATAR_MASK = (68, 0, 32, 44)  # (x, y, w, h)
+
 # Per-pixel threshold (fraction of 255*3) above which an L1 RGB difference
 # counts as "this pixel disagrees." depot-recognition uses 0.2, but Endfield's
 # tier-colored cards (e.g. 初/中/高级作战记录) differ by only ~20-30 per
@@ -48,6 +53,17 @@ _PIXEL_DIFF_THRESHOLD = 0.05
 # If the gap between best and second-best diff ratio is under this, the
 # match is flagged ambiguous (depot-recognition's signal).
 _AMBIGUOUS_GAP = 0.005
+
+# Narrow fallback for wide weapon icon crops whose labeled template is a naked
+# detail icon rather than a full slot-card capture.
+_EDGE_FALLBACK_TRIGGER_CONFIDENCE = 0.80
+_EDGE_FALLBACK_MIN_SCORE = 0.47
+_EDGE_FALLBACK_MIN_GAP = 0.05
+_EDGE_FALLBACK_CONFIDENCE_SCALE = 0.60
+_EDGE_FALLBACK_MIN_ASPECT = 1.20
+_EDGE_FALLBACK_MIN_CARD_BG_RATIO = 0.30
+_EDGE_FALLBACK_MIN_COLOR_SIMILARITY = 0.35
+_EDGE_FALLBACK_SCALES = tuple(np.linspace(0.4, 1.2, 17))
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +101,15 @@ def _normalize_thumbnail(
     img: np.ndarray,
     *,
     quantity_mask: tuple[int, int, int, int] = DEFAULT_QUANTITY_MASK,
+    avatar_mask: tuple[int, int, int, int] | None = DEFAULT_AVATAR_MASK,
 ) -> np.ndarray:
     """
     Produce a 100x100 BGRA uint8 thumbnail for pixel-diff comparison.
 
     Symmetric pipeline — applied identically to templates and query slots.
     Alpha is set so pixels are transparent (0) outside the inscribed circle
-    OR inside the quantity mask rect; opaque (255) otherwise. _diff_ratio
-    naturally skips those pixels.
+    OR inside the quantity / avatar mask rects; opaque (255) otherwise.
+    _diff_ratio naturally skips those pixels.
     """
     bgra = _to_bgra(img)
 
@@ -106,18 +123,21 @@ def _normalize_thumbnail(
         interpolation=cv2.INTER_CUBIC,
     )
 
-    # Build the final alpha: original alpha ∧ circle ∧ NOT(quantity rect).
+    # Build the final alpha: original alpha ∧ circle ∧ NOT(mask rects).
     alpha = resized[..., 3].copy()
     # Intersect with circle
     alpha = cv2.bitwise_and(alpha, _CIRCLE_MASK)
-    # Zero the quantity rect
-    qx, qy, qw, qh = quantity_mask
-    qx = max(0, min(_THUMB_SIZE, qx))
-    qy = max(0, min(_THUMB_SIZE, qy))
-    qx2 = max(0, min(_THUMB_SIZE, qx + qw))
-    qy2 = max(0, min(_THUMB_SIZE, qy + qh))
-    if qx2 > qx and qy2 > qy:
-        alpha[qy:qy2, qx:qx2] = 0
+    # Zero the symmetric comparison mask rects.
+    for mask_rect in (quantity_mask, avatar_mask):
+        if mask_rect is None:
+            continue
+        qx, qy, qw, qh = mask_rect
+        qx = max(0, min(_THUMB_SIZE, qx))
+        qy = max(0, min(_THUMB_SIZE, qy))
+        qx2 = max(0, min(_THUMB_SIZE, qx + qw))
+        qy2 = max(0, min(_THUMB_SIZE, qy + qh))
+        if qx2 > qx and qy2 > qy:
+            alpha[qy:qy2, qx:qx2] = 0
 
     out = resized.copy()
     out[..., 3] = alpha
@@ -151,6 +171,153 @@ def _diff_ratio(
 
 
 # ---------------------------------------------------------------------------
+# Edge overlay fallback
+# ---------------------------------------------------------------------------
+
+def _as_bgr(img: np.ndarray) -> np.ndarray:
+    return _to_bgra(img)[..., :3]
+
+
+def _edge_overlay_mask(template_bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2HSV)
+    _h, _s, v = cv2.split(hsv)
+    return ((v > 25).astype(np.uint8)) * 255
+
+
+def _slot_has_light_card_background(slot_bgr: np.ndarray) -> bool:
+    hsv = cv2.cvtColor(slot_bgr, cv2.COLOR_BGR2HSV)
+    _h, s, v = cv2.split(hsv)
+    ratio = float(((v > 160) & (s < 80)).mean())
+    return ratio >= _EDGE_FALLBACK_MIN_CARD_BG_RATIO
+
+
+def _foreground_hs_hist(img_bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    _h, s, v = cv2.split(hsv)
+    mask = ((v > 35) & ~((v > 160) & (s < 80))).astype(np.uint8)
+    hist = cv2.calcHist([hsv], [0, 1], mask, [24, 16], [0, 180, 0, 256])
+    cv2.normalize(hist, hist)
+    return hist
+
+
+def _foreground_color_similarity(a_bgr: np.ndarray, b_bgr: np.ndarray) -> float:
+    return float(
+        cv2.compareHist(
+            _foreground_hs_hist(a_bgr),
+            _foreground_hs_hist(b_bgr),
+            cv2.HISTCMP_CORREL,
+        )
+    )
+
+
+def _prepare_slot_for_edge_overlay(slot_bgr: np.ndarray) -> np.ndarray:
+    out = slot_bgr.copy()
+    h, w = out.shape[:2]
+    ax, ay, aw, ah = DEFAULT_AVATAR_MASK
+    qx, qy, qw, qh = DEFAULT_QUANTITY_MASK
+    rects = (
+        (
+            int(w * ax / _THUMB_SIZE),
+            int(h * ay / _THUMB_SIZE),
+            int(w * (ax + aw) / _THUMB_SIZE),
+            int(h * (ay + ah) / _THUMB_SIZE),
+        ),
+        (
+            int(w * qx / _THUMB_SIZE),
+            int(h * qy / _THUMB_SIZE),
+            int(w * (qx + qw) / _THUMB_SIZE),
+            int(h * (qy + qh) / _THUMB_SIZE),
+        ),
+    )
+    for x1, y1, x2, y2 in rects:
+        x1 = max(0, min(w, x1))
+        x2 = max(0, min(w, x2))
+        y1 = max(0, min(h, y1))
+        y2 = max(0, min(h, y2))
+        if x2 > x1 and y2 > y1:
+            out[y1:y2, x1:x2] = 255
+    return out
+
+
+def _edge_overlay_score(slot_bgr: np.ndarray, template_bgr: np.ndarray) -> float:
+    slot_h, slot_w = slot_bgr.shape[:2]
+    tpl_h, tpl_w = template_bgr.shape[:2]
+    if (
+        slot_h == 0
+        or tpl_h == 0
+        or slot_w / slot_h < _EDGE_FALLBACK_MIN_ASPECT
+        or tpl_w / tpl_h < _EDGE_FALLBACK_MIN_ASPECT
+        or not _slot_has_light_card_background(slot_bgr)
+    ):
+        return 0.0
+
+    prepared_slot = _prepare_slot_for_edge_overlay(slot_bgr)
+    if (
+        _foreground_color_similarity(prepared_slot, template_bgr)
+        < _EDGE_FALLBACK_MIN_COLOR_SIMILARITY
+    ):
+        return 0.0
+
+    query_edges = cv2.Canny(cv2.cvtColor(prepared_slot, cv2.COLOR_BGR2GRAY), 50, 150)
+    template_edges = cv2.Canny(
+        cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY),
+        50,
+        150,
+    )
+    template_mask = _edge_overlay_mask(template_bgr)
+    if int(template_mask.sum()) == 0:
+        return 0.0
+
+    best = 0.0
+    for scale in _EDGE_FALLBACK_SCALES:
+        w = max(1, int(tpl_w * scale))
+        h = max(1, int(tpl_h * scale))
+        if w < 10 or h < 10 or w > slot_w or h > slot_h:
+            continue
+        resized_edges = cv2.resize(
+            template_edges, (w, h), interpolation=cv2.INTER_AREA
+        )
+        resized_mask = cv2.resize(
+            template_mask, (w, h), interpolation=cv2.INTER_NEAREST
+        )
+        result = cv2.matchTemplate(
+            query_edges,
+            resized_edges,
+            cv2.TM_CCORR_NORMED,
+            mask=resized_mask,
+        )
+        _min_val, max_val, _min_loc, _max_loc = cv2.minMaxLoc(result)
+        best = max(best, float(max_val))
+    return best
+
+
+def _best_edge_overlay_match(
+    slot: np.ndarray, library: TemplateLibrary
+) -> tuple[str | None, float]:
+    slot_bgr = _as_bgr(slot)
+    best_id: str | None = None
+    best_score = 0.0
+    second_score = 0.0
+
+    for name, raw_template in library.raw_items():
+        score = _edge_overlay_score(slot_bgr, _as_bgr(raw_template))
+        if score > best_score:
+            second_score = best_score
+            best_score = score
+            best_id = name
+        elif score > second_score:
+            second_score = score
+
+    if (
+        best_id is not None
+        and best_score >= _EDGE_FALLBACK_MIN_SCORE
+        and best_score - second_score >= _EDGE_FALLBACK_MIN_GAP
+    ):
+        return best_id, best_score
+    return None, 0.0
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -168,7 +335,10 @@ class TemplateLibrary:
         # Pre-normalize everything at construction time so match_slot is
         # pure pixel math.
         self._templates: dict[str, np.ndarray] = {}
+        self._raw_templates: dict[str, np.ndarray] = {}
+        self._asset_type: str | None = None
         for name, arr in (templates or {}).items():
+            self._raw_templates[name] = arr
             self._templates[name] = _normalize_thumbnail(arr)
 
     @classmethod
@@ -186,16 +356,25 @@ class TemplateLibrary:
         mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
         lib = cls.__new__(cls)
         lib._templates = {}
+        lib._raw_templates = {}
+        lib._asset_type = assets_dir.name
         for name, rel in mapping.items():
             path = assets_dir.parent / rel
             img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
             if img is None:
                 continue
+            lib._raw_templates[name] = img
             lib._templates[name] = _normalize_thumbnail(img)
         return lib
 
     def items(self):
         return self._templates.items()
+
+    def raw_items(self):
+        return self._raw_templates.items()
+
+    def asset_type(self) -> str | None:
+        return self._asset_type
 
     def __len__(self) -> int:
         return len(self._templates)
@@ -238,8 +417,21 @@ def match_slot(
             second_best_diff = d
 
     confidence = 1.0 - best_diff
+    edge_matched = False
+    if (
+        library.asset_type() == "weapons"
+        and confidence < _EDGE_FALLBACK_TRIGGER_CONFIDENCE
+    ):
+        edge_id, edge_score = _best_edge_overlay_match(slot, library)
+        edge_confidence = min(0.99, edge_score / _EDGE_FALLBACK_CONFIDENCE_SCALE)
+        if edge_id is not None and edge_confidence > confidence:
+            best_id = edge_id
+            confidence = edge_confidence
+            edge_matched = True
+
     diffs_too_close = (
         best_id is not None
+        and not edge_matched
         and second_best_diff != float("inf")
         and abs(best_diff - second_best_diff) < _AMBIGUOUS_GAP
     )
