@@ -142,8 +142,57 @@ def test_save_templates_skips_already_labeled(client, monkeypatch, tmp_path):
     data = resp.json()
     assert data["saved"] == 0
     assert data["skipped"] == ["折金票"]
+    assert data.get("overwritten", []) == []
     # PNG should NOT have been written (sentinel check: the file doesn't exist)
     assert not (tmp_assets / "materials" / "折金票.png").exists()
+
+
+def test_save_templates_overwrites_when_flag_set(client, monkeypatch, tmp_path):
+    """With overwrite=true, an already-labeled entry replaces the existing
+    PNG instead of being skipped. The tracker stays unchanged (still labeled),
+    and the response reports the entry under `overwritten` rather than `saved`
+    so the UI can distinguish replacements from fresh captures."""
+    from app.routes import dev as dev_mod
+
+    tmp_assets = tmp_path / "assets"
+    (tmp_assets / "materials").mkdir(parents=True)
+    (tmp_assets / "materials.json").write_text(
+        json.dumps({"折金票": "materials/折金票.png"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_assets / "materials.labeled.json").write_text(
+        json.dumps(["折金票"], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    # Seed an existing PNG so we can verify it really gets replaced.
+    old_png = tmp_assets / "materials" / "折金票.png"
+    cv2.imwrite(str(old_png), np.zeros((5, 5, 3), dtype=np.uint8))
+    old_size = old_png.stat().st_size
+    monkeypatch.setattr(dev_mod, "_assets_dir", lambda: tmp_assets)
+
+    new_icon = np.full((40, 40, 3), 200, dtype=np.uint8)
+    _, buf = cv2.imencode(".png", new_icon)
+    icon_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+    resp = client.post(
+        "/dev/materials/save-templates",
+        json={
+            "entries": [{"name": "折金票", "icon_base64": icon_b64}],
+            "overwrite": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["saved"] == 0
+    assert data["skipped"] == []
+    assert data["overwritten"] == ["折金票"]
+    # New PNG written (size differs from the seed).
+    assert old_png.exists() and old_png.stat().st_size != old_size
+    # Tracker still records 折金票 as labeled (no duplication, no removal).
+    tracker = json.loads(
+        (tmp_assets / "materials.labeled.json").read_text(encoding="utf-8")
+    )
+    assert tracker == ["折金票"]
 
 
 def test_delete_template_removes_png_and_tracker(client, monkeypatch, tmp_path):

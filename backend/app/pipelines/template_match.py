@@ -79,6 +79,12 @@ def _build_circle_mask() -> np.ndarray:
 _CIRCLE_MASK: np.ndarray = _build_circle_mask()
 
 
+def _avatar_mask_for_asset_type(
+    asset_type: str | None,
+) -> tuple[int, int, int, int] | None:
+    return DEFAULT_AVATAR_MASK if asset_type == "weapons" else None
+
+
 # ---------------------------------------------------------------------------
 # Thumbnail normalization
 # ---------------------------------------------------------------------------
@@ -331,15 +337,21 @@ class MatchResult:
 class TemplateLibrary:
     """A store of id → pre-normalized 100x100 BGRA template thumbnail."""
 
-    def __init__(self, templates: dict[str, np.ndarray] | None = None):
+    def __init__(
+        self,
+        templates: dict[str, np.ndarray] | None = None,
+        *,
+        asset_type: str | None = None,
+    ):
         # Pre-normalize everything at construction time so match_slot is
         # pure pixel math.
         self._templates: dict[str, np.ndarray] = {}
         self._raw_templates: dict[str, np.ndarray] = {}
-        self._asset_type: str | None = None
+        self._asset_type = asset_type
+        avatar_mask = _avatar_mask_for_asset_type(self._asset_type)
         for name, arr in (templates or {}).items():
             self._raw_templates[name] = arr
-            self._templates[name] = _normalize_thumbnail(arr)
+            self._templates[name] = _normalize_thumbnail(arr, avatar_mask=avatar_mask)
 
     @classmethod
     def from_directory(
@@ -358,13 +370,14 @@ class TemplateLibrary:
         lib._templates = {}
         lib._raw_templates = {}
         lib._asset_type = assets_dir.name
+        avatar_mask = _avatar_mask_for_asset_type(lib._asset_type)
         for name, rel in mapping.items():
             path = assets_dir.parent / rel
             img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
             if img is None:
                 continue
             lib._raw_templates[name] = img
-            lib._templates[name] = _normalize_thumbnail(img)
+            lib._templates[name] = _normalize_thumbnail(img, avatar_mask=avatar_mask)
         return lib
 
     def items(self):
@@ -402,7 +415,11 @@ def match_slot(
     if len(library) == 0:
         return MatchResult(material_id=None, confidence=0.0)
 
-    query = _normalize_thumbnail(slot, quantity_mask=quantity_mask)
+    query = _normalize_thumbnail(
+        slot,
+        quantity_mask=quantity_mask,
+        avatar_mask=_avatar_mask_for_asset_type(library.asset_type()),
+    )
 
     best_id: str | None = None
     best_diff: float = float("inf")

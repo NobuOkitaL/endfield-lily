@@ -10,7 +10,7 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
-from app.pipelines.grid_detect import detect_slots
+from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import ocr_digits, parse_ocr_result
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
@@ -45,6 +45,65 @@ def _bbox_to_list(bbox: tuple[int, int, int, int]) -> list[int]:
     return list(bbox)
 
 
+# Bottom-strip OCR ratios. 0.85/0.78 isolate the quantity text band where
+# icon silhouettes don't intrude (a red-crystal spike on 燎石 was reading
+# as a leading "1", turning 76 → 176 at wider crops).
+_QTY_CROP_FRACS = (0.85, 0.78, 0.70, 0.60, 0.50, 0.40)
+
+
+def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
+    """3× upscale + sharpen + Otsu binarize. Cleans up icon silhouettes that
+    abut the digit text, which matters at wider bottom crops."""
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if region.ndim == 3 else region
+    upscaled = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    blurred = cv2.GaussianBlur(upscaled, (0, 0), 1.0)
+    sharpened = cv2.addWeighted(upscaled, 1.8, blurred, -0.8, 0)
+    _, thresholded = cv2.threshold(
+        sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    return cv2.cvtColor(thresholded, cv2.COLOR_GRAY2BGR)
+
+
+def _ocr_inventory_quantity(
+    canvas: np.ndarray, x: int, y: int, w: int, eff_h: int
+) -> tuple[str, float, int | None]:
+    """Run OCR at multiple bottom-crop ratios on both raw and preprocessed
+    regions, then pick the value with the most occurrences (icon-noise
+    artifacts rarely repeat across crops/preprocessing variants); break ties
+    by digit count, then by max confidence."""
+    candidates: list[tuple[int, float, str]] = []
+    first_rt, first_cf = "", 0.0
+    for crop_frac in _QTY_CROP_FRACS:
+        region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
+        if region.size == 0:
+            continue
+        for variant in (region, _prepare_qty_ocr_image(region)):
+            rt, cf = ocr_digits(variant)
+            if not first_rt:
+                first_rt, first_cf = rt, cf
+            q = parse_ocr_result(rt, cf)
+            if q is not None:
+                candidates.append((q, cf, rt))
+
+    if not candidates:
+        return first_rt, first_cf, None
+
+    grouped: dict[int, list[tuple[float, str]]] = {}
+    for value, cf, rt in candidates:
+        grouped.setdefault(value, []).append((cf, rt))
+
+    chosen = max(
+        grouped,
+        key=lambda v: (
+            len(grouped[v]),
+            len(str(v)),
+            max(cf for cf, _ in grouped[v]),
+        ),
+    )
+    cf, rt = max(grouped[chosen], key=lambda item: item[0])
+    return rt, cf, chosen
+
+
 @router.post("/inventory")
 async def recognize_inventory(image: UploadFile = File(...)):
     """
@@ -60,6 +119,12 @@ async def recognize_inventory(image: UploadFile = File(...)):
     # 武陵仓库 main-grid slots are small (~68px); 7×7 close kernel surfaces
     # them reliably without over-merging neighbors.
     slots = detect_slots(canvas, close_kernel=7)
+    canvas_h = canvas.shape[0]
+    # edge_lattice augmentation can return undersized cells whose bbox ends
+    # above the level/quantity text. Extend the OCR region down to the
+    # P75 slot height (same trick operators / weapons routes use) so short
+    # bboxes still capture the digit row.
+    target_h = p75_height(list(slots))
 
     library = _load_library()
     items: list[dict] = []
@@ -70,27 +135,8 @@ async def recognize_inventory(image: UploadFile = File(...)):
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
 
-        # OCR the quantity at several bottom-crop ratios and pick the best
-        # parse. A single fixed ratio doesn't work for all materials: a tight
-        # crop (30%) can drop trailing digits on 3-digit quantities
-        # ("202" → "20"), while a wider crop (50%) includes icon silhouettes
-        # on items like 存续的痕迹 and OCR returns "" or garbage. Trust the
-        # parse with the most digits (and higher confidence on ties).
-        candidates: list[tuple[int, float, str, int]] = []
-        first_rt, first_cf = "", 0.0
-        for crop_frac in (0.70, 0.60, 0.50, 0.40):
-            qr = canvas[y + int(h * crop_frac) : y + h, x : x + w]
-            rt, cf = ocr_digits(qr)
-            if not first_rt:
-                first_rt, first_cf = rt, cf
-            q = parse_ocr_result(rt, cf)
-            if q is not None:
-                candidates.append((len(str(q)), cf, rt, q))
-        if candidates:
-            candidates.sort(reverse=True)  # prefer most digits, then higher conf
-            _n, conf, raw_text, quantity = candidates[0]
-        else:
-            raw_text, conf, quantity = first_rt, first_cf, None
+        eff_h = min(max(h, target_h), canvas_h - y)
+        raw_text, conf, quantity = _ocr_inventory_quantity(canvas, x, y, w, eff_h)
 
         # Run matching with threshold=0 so best_guess is always populated,
         # then apply the real threshold ourselves. This lets unknowns pre-fill

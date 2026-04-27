@@ -79,17 +79,55 @@ async function extractSlots(assetType: AssetType, file: File): Promise<Slot[]> {
 async function saveTemplates(
   assetType: AssetType,
   entries: { name: string; icon_base64: string }[],
-): Promise<{ saved: number; skipped: string[] }> {
+  overwrite = false,
+): Promise<{ saved: number; skipped: string[]; overwritten: string[] }> {
   const r = await fetch(`${API_BASE}/dev/${assetType}/save-templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entries }),
+    body: JSON.stringify({ entries, overwrite }),
   });
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`save failed (${r.status}): ${text}`);
   }
-  return (await r.json()) as { saved: number; skipped: string[] };
+  const data = (await r.json()) as {
+    saved: number;
+    skipped: string[];
+    overwritten?: string[];
+  };
+  return { ...data, overwritten: data.overwritten ?? [] };
+}
+
+/**
+ * Two-pass save flow: first call backend without overwrite. If any entry
+ * was skipped because it's already labeled, ask the user (single confirm
+ * dialog for the whole batch) whether to overwrite. On "yes", re-send only
+ * the skipped entries with overwrite=true.
+ */
+async function saveWithOverwriteConfirm(
+  assetType: AssetType,
+  entries: { name: string; icon_base64: string }[],
+): Promise<{ saved: number; overwritten: string[]; skipped: string[] }> {
+  const first = await saveTemplates(assetType, entries, false);
+  if (first.skipped.length === 0) {
+    return first;
+  }
+  const yes = window.confirm(
+    `以下 ${first.skipped.length} 个名字已经标注过：\n\n` +
+      first.skipped.join('、') +
+      `\n\n要覆盖原模板吗？\n\n确定 = 覆盖；取消 = 保留原模板`,
+  );
+  if (!yes) {
+    return first;
+  }
+  const skippedSet = new Set(first.skipped);
+  const overwriteEntries = entries.filter(e => skippedSet.has(e.name));
+  const second = await saveTemplates(assetType, overwriteEntries, true);
+  return {
+    saved: first.saved + second.saved,
+    overwritten: [...first.overwritten, ...second.overwritten],
+    skipped: [],
+  };
 }
 
 async function deleteTemplate(assetType: AssetType, name: string): Promise<void> {
@@ -696,11 +734,15 @@ function ManualMode({
     if (entries.length === 0) return;
     setSaving(true);
     try {
-      const { saved, skipped } = await saveTemplates(assetType, entries);
-      const msg = skipped.length > 0
-        ? `已保存 ${saved} 条，跳过 ${skipped.length} 条（已标注）`
-        : `已保存 ${saved} 条模板`;
-      showToast({ kind: 'ok', msg });
+      const { saved, overwritten, skipped } = await saveWithOverwriteConfirm(
+        assetType,
+        entries,
+      );
+      const parts: string[] = [];
+      if (saved > 0) parts.push(`已保存 ${saved} 条`);
+      if (overwritten.length > 0) parts.push(`覆盖 ${overwritten.length} 条`);
+      if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 条`);
+      showToast({ kind: 'ok', msg: parts.join('，') || '没有变化' });
       // Drop boxes whose name was handled (same convention as auto mode).
       const handled = new Set(entries.map(e => e.name));
       const remaining = boxes.filter(b => !handled.has(b.name));
@@ -1201,11 +1243,15 @@ export default function App() {
     if (entries.length === 0) return;
     setSaving(true);
     try {
-      const { saved, skipped } = await saveTemplates(assetType, entries);
-      const msg = skipped.length > 0
-        ? `已保存 ${saved} 条，跳过 ${skipped.length} 条（已标注）`
-        : `已保存 ${saved} 条模板`;
-      showToast({ kind: 'ok', msg });
+      const { saved, overwritten, skipped } = await saveWithOverwriteConfirm(
+        assetType,
+        entries,
+      );
+      const parts: string[] = [];
+      if (saved > 0) parts.push(`已保存 ${saved} 条`);
+      if (overwritten.length > 0) parts.push(`覆盖 ${overwritten.length} 条`);
+      if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 条`);
+      showToast({ kind: 'ok', msg: parts.join('，') || '没有变化' });
       const handled = new Set(entries.map(e => e.name));
       setSlots(prev => prev.filter(s => !handled.has(s.name)));
       refreshNames();

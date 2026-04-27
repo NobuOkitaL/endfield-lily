@@ -206,6 +206,11 @@ class SaveTemplateEntry(BaseModel):
 
 class SaveTemplatesRequest(BaseModel):
     entries: list[SaveTemplateEntry]
+    # When false (default), entries whose name is already in the labeled
+    # tracker are skipped to avoid silently clobbering a prior capture.
+    # When true, those entries overwrite the existing PNG. The label-tool
+    # surfaces a confirmation dialog before sending the second-pass request.
+    overwrite: bool = False
 
 
 @router.post("/{asset_type}/save-templates")
@@ -249,10 +254,12 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
     labeled = _load_labeled(asset_type)
     saved = 0
     skipped: list[str] = []
+    overwritten: list[str] = []
     newly_labeled: set[str] = set()
 
     for entry in req.entries:
-        if entry.name in labeled:
+        already_labeled = entry.name in labeled
+        if already_labeled and not req.overwrite:
             skipped.append(entry.name)
             continue
         try:
@@ -277,14 +284,18 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
                 detail=f"Failed to write PNG for {entry.name}",
             )
         mapping[entry.name] = f"{asset_type}/{entry.name}.png"
-        newly_labeled.add(entry.name)
-        saved += 1
+        if already_labeled:
+            overwritten.append(entry.name)
+        else:
+            newly_labeled.add(entry.name)
+            saved += 1
 
-    if newly_labeled:
+    if newly_labeled or overwritten:
         json_path.write_text(
             json.dumps(mapping, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        _save_labeled(asset_type, labeled | newly_labeled)
+        if newly_labeled:
+            _save_labeled(asset_type, labeled | newly_labeled)
 
-    return {"saved": saved, "skipped": skipped}
+    return {"saved": saved, "skipped": skipped, "overwritten": overwritten}

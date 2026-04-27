@@ -86,7 +86,7 @@ def test_avatar_overlay_does_not_break_match():
     query = template.copy()
     cv2.circle(query, (85, 15), 15, (40, 80, 230, 255), -1)
 
-    lib = TemplateLibrary({"weapon_a": template})
+    lib = TemplateLibrary({"weapon_a": template}, asset_type="weapons")
     result = match_slot(query, lib, threshold=0.8)
 
     template_without_avatar_mask = _normalize_thumbnail(template, avatar_mask=None)
