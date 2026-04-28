@@ -108,3 +108,34 @@ def test_inventory_endpoint_rejects_non_image(client):
     )
     # Either 400, 415, or 422 is acceptable
     assert resp.status_code in (400, 415, 422)
+
+
+def test_inventory_recognizes_top_bar_currency(client, monkeypatch):
+    img = np.zeros((884, 1920, 3), dtype=np.uint8)
+    cv2.rectangle(img, (1320, 12), (1660, 70), (54, 54, 54), -1)
+    cv2.putText(
+        img,
+        "5200308",
+        (1430, 53),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (235, 235, 235),
+        2,
+        cv2.LINE_AA,
+    )
+
+    from app.routes import inventory as inv_mod
+
+    monkeypatch.setattr(inv_mod, "_load_library", lambda: TemplateLibrary({}))
+
+    resp = client.post(
+        "/recognize/inventory",
+        files={"image": ("currency.png", _png_bytes(img), "image/png")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    currencies = [
+        item for item in data["items"] if item["material_id"] == "折金票"
+    ]
+    assert currencies
+    assert currencies[0]["quantity"] > 0

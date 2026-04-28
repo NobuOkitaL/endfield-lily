@@ -34,3 +34,4 @@ Thumbs.db
 # User state blob written by the cross-browser sync endpoints.
 # Contains the frontend's Zustand snapshot — never commit user data.
 backend/app/data/
+backend/tests/test_inventory_endpoint.py

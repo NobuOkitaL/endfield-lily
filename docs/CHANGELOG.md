@@ -2,6 +2,46 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-28 · 武器 / 库存识别全面打通 · 干员模板补齐至 26/26
+
+继续上一轮的格子检测修复，这一轮把识别管线剩下的几个硬伤也清掉。当前**真实游戏截图**对所有四类（材料 / 干员 / 武器 / 库存）都能稳定识别。
+
+### 模板匹配增强（`template_match.py`）
+
+- **Avatar overlay mask**：武器卡右上角会画装备它的干员头像 overlay。新增 `DEFAULT_AVATAR_MASK = (68, 0, 32, 44)`，在 `_normalize_thumbnail` 里和现有的右下数量 mask 一样对称应用：模板和 query 都盖白这块 → 该区域差值为零，孤舟 / 已装备武器卡的高亮 + 头像不再压低 conf
+- **Avatar mask 仅对 weapons asset_type 生效**：材料 / 干员模板的右上角是真实视觉特征（晶体顶点 / 操作员发型），盲目 mask 会让 9592 武陵仓库识别从 9 直接降到 9（已实测）。`TemplateLibrary.__init__` / `from_directory` / `match_slot` 都按 `library.asset_type()` 决定是否传 `DEFAULT_AVATAR_MASK`
+- **Edge-overlay fallback for weapons-only**：用户的武器模板尺寸不一致——有的是 102×75 裸图标（label-tool 早期截）、有的是 159×163 整张卡片（label-tool 当前几何）。pixel-diff 把两边 resize 到 100×100 后图标在画布里的尺寸比例完全不同，conf 永远 0.3-0.5。新增 `_best_edge_overlay_match`：在 `match_slot` 主匹配 conf < 0.80 且 asset_type=="weapons" 时触发，用 multi-scale Canny + masked TM_CCORR_NORMED 在 query 卡里**找图标位置 + 尺寸**，绕开尺寸不匹配。守卫严格（色相 / 长宽比 / 卡片背景三层），不会污染高置信主匹配
+- 新测试 `test_avatar_overlay_does_not_break_match`：模板 + query（同图 + 右上加圆形 overlay），mask-on conf=1.000 vs mask-off 理论 conf=0.614
+
+### 库存 OCR 管线升级（`inventory.py`）
+
+跑 9592 武陵仓库时发现两个独立 OCR bug，跟 weapons 路由的修复模式同步过来：
+
+- **`eff_h` 扩展**：原 inventory.py 用 `canvas[y + int(h * frac) : y + h]`，对 edge_lattice 给的小尺寸 bbox 直接在卡片中部截止，level 文字落在 bbox 之外。改成 `eff_h = min(max(h, p75_height(slots)), canvas_h - y)` 并在所有 crop 里用 `eff_h` 替换 `h`。修了**中红柱状菌 0 → 89**（slot 67×51 没扩展时 OCR 看不到数字）
+- **预处理 + 紧裁剪 + 分组投票**：原本 4 档 crop（0.40/0.50/0.60/0.70）+ 最长位数 winning。现在加 `_QTY_CROP_FRACS = (0.85, 0.78, 0.70, 0.60, 0.50, 0.40)`——0.78 / 0.85 把数字带从图标剪影里隔离出来；每档同时跑 raw 和 `_prepare_qty_ocr_image`（3× 放大 + 锐化 + Otsu binarize），投票按 `(出现次数, 位数, 最高 conf)` 排序——孤立的图标干扰只会出现 1 次，正确读数会被多个变体重复确认。修了**燎石 176 → 76**（红色晶体尖刺被多次识别为前导 1，分组投票后被正确读数压倒）
+
+### Label-tool overwrite 确认流程
+
+之前 `save-templates` 默认跳过 tracker 里已存在的名字（防止误覆盖标好的模板）。但用户想**升级模板**（比如从 9590 贵重品库重新捕获武陵仓库版本）就必须先点"删除"再标，多两步。
+
+- 后端 `SaveTemplatesRequest` 加 `overwrite: bool = False` 字段
+- `save_templates` 行为：`already_labeled and not overwrite` → 跳过；`already_labeled and overwrite` → 覆盖写入并归到新的 `overwritten` 列表
+- 返回值多一个字段：`{saved, skipped, overwritten}`
+- 前端 `label-tool/src/App.tsx` 新增 `saveWithOverwriteConfirm` 两段式流程：先 `overwrite=false` 跑一遍；若 `skipped > 0`，弹原生 `window.confirm`：`以下 N 个名字已经标注过：…要覆盖原模板吗？确定 = 覆盖；取消 = 保留原模板`；点确定就把 skipped 那批用 `overwrite=true` 再 POST 一次
+- toast 文案按结果分段：`已保存 X 条，覆盖 Y 条，跳过 Z 条`
+- 测试 `test_save_templates_overwrites_when_flag_set`：verify PNG 真被替换 + tracker 不重复
+
+### 标注覆盖率（用户连续两轮补标后）
+
+- 材料：34/36（94%）—— 不变
+- **干员：9/26 → 26/26（100%）** ✓
+- **武器：20/68 → 55/68（81%）** ✓
+
+### 测试计数
+
+- 前端 84 passing（不变）
+- 后端 55 → **57 passing**（+1 avatar overlay mask 不破坏匹配，+1 save-templates 覆盖标志）
+
 ## 2026-04-27 · 武陵仓库切格子根本性修复（edge-lattice augmentation）
 
 之前那张 IMG_9592 武陵仓库截图（双面板 + 顶排亮色水晶 + 底排被糊成横条）一直卡在 25/44 检出。所有调过的 Otsu 变体（RETR_CCOMP/LIST、CLAHE、adaptive、dual-polarity、recursive、width-clustering）全都回归别的截图。
@@ -324,24 +364,27 @@
 - 库存页、干员页、武器页、规划页、规划详情 dialog 全部接通
 - 端末地迁移后补抓了 3 张新图（庄方宜 / 孤舟 / 雾中微光），改名的 2 件也拉了新版（显锋 / O.B.J.迅极）
 
-## 当前状态快照（2026-04-27）
+## 当前状态快照（2026-04-28）
 
 - **repo**：`NobuOkitaL/endfield-lily`（本地目录仍 `ZMD/`）
 - **前端测试**：84 passing
-- **后端测试**：55 passing
+- **后端测试**：57 passing
 - **TypeScript**：clean（tsc --noEmit）
 - **页面**：首页 / 规划 / 库存 / 干员 / 武器 / 基质 / 识别 / 设置（8 个）
-- **独立工具**：`label-tool/`（端口 5174；双模式：自动提取 + 手动标注 w/ drag-and-drop / move / resize / 两段式 draw→name）
+- **独立工具**：`label-tool/`（端口 5174；双模式：自动提取 + 手动标注 w/ drag-and-drop / move / resize / 两段式 draw→name；保存时弹覆盖确认对话框）
 - **数据**：26 干员 / 68 武器 / 39 材料 / 486 行 DATABASE / 7 张能量淤积点
-- **识别算法**：pixelmatch 风格 RGBA L1 diff（对称归一化、per-pixel 阈值 0.05）+ color BGR pipeline + 自适应 Otsu（含 supercell 拆分守卫 `_SPLIT_MAX_RATIO=3.0` / `_SPLIT_RATIO_TOLERANCE=0.35`）+ **edge-lattice augmentation**（Canny + 投影周期拟合，gate `+10 / ≤56`，把武陵仓库双面板从 25 → 44 切对）+ 多裁剪 OCR（max-digits 启发式）+ best-guess 预填
-- **标注进度**：材料 34/36 · 干员 9/26 · 武器 20/68
+- **识别算法**：pixelmatch 风格 RGBA L1 diff（对称归一化、per-pixel 阈值 0.05、weapons-only avatar mask + edge-overlay multi-scale fallback）+ color BGR pipeline + 自适应 Otsu（含 supercell 拆分守卫 `_SPLIT_MAX_RATIO=3.0` / `_SPLIT_RATIO_TOLERANCE=0.35`）+ **edge-lattice augmentation**（Canny + 投影周期拟合，gate `+10 / ≤56`，把武陵仓库双面板从 25 → 44 切对，merge 保留 baseline 几何）+ 多裁剪 OCR（**inventory + weapons 都用 6 档 0.85→0.40 + 3× 放大锐化 + Otsu 二值化预处理 + 出现次数分组投票**）+ best-guess 预填
+- **标注进度**：材料 34/36（94%）· 干员 26/26（100%）· 武器 55/68（81%）
 - **字体**：Anton + Hanken Grotesk + JetBrains Mono
 - **色板**：Signal Yellow + Military Green + Alert Red + Canvas `#0a0a0a`
 
 ## Backlog
 
-- 干员 / 武器剩下的真游戏截图模板还没采完（干员 9/26、武器 20/68）；材料已经 34/36
+- 武器剩下 13 个未标 + 材料 2 个未标，等用户开到对应游戏界面时补
 - ~~武陵仓库顶排亮色水晶卡的 Otsu 阈值瓶颈~~（已通过 edge-lattice augmentation 解决，2026-04-27）
+- ~~高亮选中卡 + avatar overlay 让模板匹配 conf 暴跌~~（已通过 weapons-only avatar mask + edge-overlay fallback 解决，2026-04-28）
+- ~~edge-lattice 给的小尺寸 bbox 让 inventory OCR 截断~~（已通过 inventory `eff_h` 扩展解决，2026-04-28）
+- ~~图标剪影干扰 inventory 数量读数（76 → 176）~~（已通过预处理 + 紧裁剪 + 分组投票解决，2026-04-28）
 - `load_and_normalize` 改走全色（目前仍先灰度）
 - 真实截图 fixture（库存 ≥10 张 / 干员列表 ≥5 张 / 武器列表 ≥5 张）做识别回归
 - `基建` / `装备适配` / `信赖` 的 end.wiki 边界值回归（当前只做了 spot check）
