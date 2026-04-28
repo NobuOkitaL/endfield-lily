@@ -135,9 +135,10 @@ def _ocr_inventory_quantity(
         if strong:
             return top_data["best_rt"], top_data["max_conf"], top_value
 
+    strict_candidates: list[tuple[int, float, str, float]] = []
     candidates: list[tuple[int, float, str]] = []
     det_first_rt, det_first_cf = "", 0.0
-    for frac in _QTY_CROP_FRACS:
+    for index, frac in enumerate(_QTY_CROP_FRACS):
         region = canvas[y + int(eff_h * frac) : y + eff_h, x : x + w]
         if region.size == 0:
             continue
@@ -145,9 +146,46 @@ def _ocr_inventory_quantity(
             rt, cf = ocr_digits(variant, use_text_det=True)
             if not det_first_rt:
                 det_first_rt, det_first_cf = rt, cf
+            if cf >= PARSEABLE_CONFIDENCE_FLOOR:
+                strict_value = parse_quantity_string_strict(rt)
+                if strict_value is not None:
+                    strict_candidates.append((strict_value, cf, rt, frac))
             q = parse_ocr_result(rt, cf)
             if q is not None:
                 candidates.append((q, cf, rt))
+
+        if index >= 1 and strict_candidates:
+            by_value = {}
+            for value, confidence, raw_text, candidate_frac in strict_candidates:
+                slot = by_value.setdefault(
+                    value,
+                    {"fracs": set(), "max_conf": 0.0, "best_rt": ""},
+                )
+                slot["fracs"].add(candidate_frac)
+                if confidence > slot["max_conf"]:
+                    slot["max_conf"], slot["best_rt"] = confidence, raw_text
+            ranked = sorted(
+                by_value.items(),
+                key=lambda kv: (-len(kv[1]["fracs"]), -kv[1]["max_conf"]),
+            )
+            top_value, top_data = ranked[0]
+            top_frac_count = len(top_data["fracs"])
+            second_frac_count = (
+                len(ranked[1][1]["fracs"]) if len(ranked) > 1 else 0
+            )
+            if index == 1:
+                if (
+                    top_frac_count >= 2
+                    and top_data["max_conf"] >= 0.60
+                    and top_frac_count > second_frac_count
+                ):
+                    return top_data["best_rt"], top_data["max_conf"], top_value
+            elif index >= 3:
+                if (
+                    top_frac_count >= 3
+                    or (top_frac_count - second_frac_count) >= 2
+                ):
+                    return top_data["best_rt"], top_data["max_conf"], top_value
 
     if not candidates:
         return det_first_rt or first_rt, det_first_cf or first_cf, None
