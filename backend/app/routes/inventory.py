@@ -11,7 +11,12 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
 from app.pipelines.grid_detect import detect_slots, p75_height
-from app.pipelines.ocr import ocr_digits, parse_ocr_result
+from app.pipelines.ocr import (
+    PARSEABLE_CONFIDENCE_FLOOR,
+    ocr_digits,
+    parse_ocr_result,
+    parse_quantity_string_strict,
+)
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
 
@@ -56,6 +61,7 @@ _TOP_BAR_CURRENCY_OCR_REGIONS = (
     (1320, 18, 340, 44),
     (1320, 8, 340, 66),
 )
+_NO_DET_STRONG_CONFIDENCE = 0.50
 
 
 def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
@@ -74,26 +80,77 @@ def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
 def _ocr_inventory_quantity(
     canvas: np.ndarray, x: int, y: int, w: int, eff_h: int
 ) -> tuple[str, float, int | None]:
-    """Run OCR at multiple bottom-crop ratios on both raw and preprocessed
-    regions, then pick the value with the most occurrences (icon-noise
-    artifacts rarely repeat across crops/preprocessing variants); break ties
-    by digit count, then by max confidence."""
-    candidates: list[tuple[int, float, str]] = []
+    """Run no-det OCR first, then fall back to detector OCR voting.
+
+    The no-det path is fast but only trusted when clean, strict parses agree
+    across distinct crop ratios. The detector fallback preserves the previous
+    loose parse/vote behavior, including leading-junk rescue.
+    """
+    strict_candidates: list[tuple[int, float, str, float]] = []
     first_rt, first_cf = "", 0.0
-    for crop_frac in _QTY_CROP_FRACS:
-        region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
+
+    for frac in _QTY_CROP_FRACS:
+        region = canvas[y + int(eff_h * frac) : y + eff_h, x : x + w]
         if region.size == 0:
             continue
         for variant in (region, _prepare_qty_ocr_image(region)):
-            rt, cf = ocr_digits(variant)
+            rt, cf = ocr_digits(variant, use_text_det=False)
             if not first_rt:
                 first_rt, first_cf = rt, cf
+            if cf >= PARSEABLE_CONFIDENCE_FLOOR:
+                strict_value = parse_quantity_string_strict(rt)
+                if strict_value is not None:
+                    strict_candidates.append((strict_value, cf, rt, frac))
+
+    by_value: dict[int, dict] = {}
+    for value, confidence, raw_text, frac in strict_candidates:
+        slot = by_value.setdefault(
+            value,
+            {"fracs": set(), "max_conf": 0.0, "best_rt": ""},
+        )
+        slot["fracs"].add(frac)
+        if confidence > slot["max_conf"]:
+            slot["max_conf"], slot["best_rt"] = confidence, raw_text
+
+    if by_value:
+        ranked = sorted(
+            by_value.items(),
+            key=lambda kv: (-len(kv[1]["fracs"]), -kv[1]["max_conf"]),
+        )
+        top_value, top_data = ranked[0]
+        top_frac_count = len(top_data["fracs"])
+        second_frac_count = len(ranked[1][1]["fracs"]) if len(ranked) > 1 else 0
+        strong = (
+            top_value != 0
+            and top_frac_count > second_frac_count
+            and (
+                top_frac_count >= 3
+                or (
+                    top_frac_count >= 2
+                    and top_data["max_conf"] >= _NO_DET_STRONG_CONFIDENCE
+                    and any(frac >= 0.60 for frac in top_data["fracs"])
+                )
+            )
+        )
+        if strong:
+            return top_data["best_rt"], top_data["max_conf"], top_value
+
+    candidates: list[tuple[int, float, str]] = []
+    det_first_rt, det_first_cf = "", 0.0
+    for frac in _QTY_CROP_FRACS:
+        region = canvas[y + int(eff_h * frac) : y + eff_h, x : x + w]
+        if region.size == 0:
+            continue
+        for variant in (region, _prepare_qty_ocr_image(region)):
+            rt, cf = ocr_digits(variant, use_text_det=True)
+            if not det_first_rt:
+                det_first_rt, det_first_cf = rt, cf
             q = parse_ocr_result(rt, cf)
             if q is not None:
                 candidates.append((q, cf, rt))
 
     if not candidates:
-        return first_rt, first_cf, None
+        return det_first_rt or first_rt, det_first_cf or first_cf, None
 
     grouped: dict[int, list[tuple[float, str]]] = {}
     for value, cf, rt in candidates:

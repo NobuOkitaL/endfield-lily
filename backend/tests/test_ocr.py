@@ -5,7 +5,11 @@ The OCR engine uses lazy initialization, so just importing the module
 and calling parse_* functions must not download or load any model.
 """
 import pytest
-from app.pipelines.ocr import parse_quantity_string, parse_ocr_result
+from app.pipelines.ocr import (
+    parse_ocr_result,
+    parse_quantity_string,
+    parse_quantity_string_strict,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +58,36 @@ class TestParseQuantityString:
     ])
     def test_parametrized(self, raw, expected):
         assert parse_quantity_string(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# parse_quantity_string_strict
+# ---------------------------------------------------------------------------
+
+class TestParseQuantityStringStrict:
+    def test_plain_integer(self):
+        assert parse_quantity_string_strict("245") == 245
+
+    def test_comma_separated(self):
+        assert parse_quantity_string_strict("1,234") == 1234
+
+    def test_plus_suffix_strips_plus(self):
+        assert parse_quantity_string_strict("9999+") == 9999
+
+    def test_wan_integer(self):
+        assert parse_quantity_string_strict("3万") == 30000
+
+    def test_wan_decimal(self):
+        assert parse_quantity_string_strict("1.2万") == 12000
+
+    def test_leading_punctuation_is_not_rescued(self):
+        assert parse_quantity_string_strict(".80") is None
+
+    def test_lv_prefix_is_not_rescued(self):
+        assert parse_quantity_string_strict("Lv.80") is None
+
+    def test_empty_string_returns_none(self):
+        assert parse_quantity_string_strict("") is None
 
 
 # ---------------------------------------------------------------------------

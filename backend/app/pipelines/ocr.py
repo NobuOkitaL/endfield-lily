@@ -10,30 +10,47 @@ the first actual OCR call.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Lazy engine singleton
+# Lazy engine singletons
 # ---------------------------------------------------------------------------
 
+_engine_det = None  # type: ignore[assignment]
+_engine_no_det = None  # type: ignore[assignment]
+# Back-compat alias for scripts/tests that reached into the original singleton.
 _engine = None  # type: ignore[assignment]
 
 
-def _get_engine():
-    """Return (and lazily init) the OCR engine singleton."""
-    global _engine
-    if _engine is None:
+def _get_engine(use_text_det: bool = True):
+    """Return (and lazily init) an OCR engine singleton."""
+    global _engine, _engine_det, _engine_no_det
+    if use_text_det:
+        if _engine is not None and _engine is not _engine_det:
+            _engine_det = _engine
+        if _engine_det is None:
+            # RapidOCR is the installed backend for this project
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
+            _engine_det = RapidOCR(
+                text_score=0.1,
+                det_model_path=None,
+                det_box_thresh=0.1,
+                det_unclip_ratio=3.0,
+            )
+        _engine = _engine_det
+        return _engine_det
+
+    if _engine_no_det is None:
         # RapidOCR is the installed backend for this project
         from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
-        _engine = RapidOCR(
+        _engine_no_det = RapidOCR(
+            use_text_det=False,
             text_score=0.1,
             det_model_path=None,
             det_box_thresh=0.1,
             det_unclip_ratio=3.0,
         )
-    return _engine
+    return _engine_no_det
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +62,11 @@ _WAN_RE = re.compile(
     re.UNICODE,
 )
 _NUM_RE = re.compile(r"^\s*([0-9][0-9,]*)\+?\s*$")
+_STRICT_WAN_RE = re.compile(
+    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*万\s*$",
+    re.UNICODE,
+)
+_STRICT_NUM_RE = re.compile(r"^\s*([0-9][0-9,]*)\+?\s*$")
 
 CONFIDENCE_THRESHOLD = 0.8
 # Lower floor at which a "clean" digit string is still trustable. RapidOCR
@@ -54,6 +76,24 @@ CONFIDENCE_THRESHOLD = 0.8
 # digits-only match — even low-confidence non-digit noise won't parse, so
 # the regex provides the real safety net.
 PARSEABLE_CONFIDENCE_FLOOR = 0.3
+
+
+def parse_quantity_string_strict(raw: str) -> int | None:
+    """Parse clean quantity OCR text without leading-junk rescue."""
+    if not raw or not raw.strip():
+        return None
+
+    wan_match = _STRICT_WAN_RE.match(raw)
+    if wan_match:
+        value = float(wan_match.group(1)) * 10_000
+        return int(round(value))
+
+    num_match = _STRICT_NUM_RE.match(raw)
+    if num_match:
+        digits = num_match.group(1).replace(",", "")
+        return int(digits)
+
+    return None
 
 
 def parse_quantity_string(raw: str) -> int | None:
@@ -118,7 +158,7 @@ def parse_ocr_result(raw: str, confidence: float) -> int | None:
 # OCR engine call
 # ---------------------------------------------------------------------------
 
-def ocr_digits(image: np.ndarray) -> tuple[str, float]:
+def ocr_digits(image: np.ndarray, *, use_text_det: bool = True) -> tuple[str, float]:
     """Run OCR on *image* and return (text, confidence) of the best match.
 
     Uses rapidocr-onnxruntime as the backend (lazy init on first call).
@@ -132,7 +172,7 @@ def ocr_digits(image: np.ndarray) -> tuple[str, float]:
     params produce a stable ~0.5 confidence result. The safety net is still
     `parse_quantity_string` which rejects non-digit strings.
     """
-    engine = _get_engine()
+    engine = _get_engine(use_text_det=use_text_det)
     result, _elapse = engine(image)
 
     if not result:
