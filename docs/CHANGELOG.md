@@ -2,6 +2,47 @@
 
 本地养成规划器从 scaffold 到"总控核心 Lily"的演进记录。按主题分段（不是严格时间线），commit sha 只标关键节点。
 
+## 2026-04-28（晚些时候）· 库存 OCR 性能优化 · 端到端 3-4× 提速
+
+上一轮把识别质量打通后，单张库存截图端到端要 60-100s（IMG_9590 38s、IMG_9592 42s），瓶颈是 OCR：30+ slot × 12 call/slot × 100-300ms/call。这轮把 IMG_9590 压到 ~10s、IMG_9592 压到 ~14-15s，**0 质量回归**。
+
+### 关键发现：detector CNN 是绝对瓶颈
+
+rapidocr 的两阶段管线（detection CNN → recognition CNN）里，detection 占单调用 95%+。但库存 slot 已经预裁成数字条带，detector 的"找文字框"工作大半是浪费。spike 实验关掉 detector（`use_text_det=False`）发现：
+
+- 单 OCR 调用 ~100ms → ~4ms（**~25× 提速**）
+- 但出现新回归：单数字 1 读不到、3 位数 207 完全失败、icon 边缘被读成前导数字（26 → 226）
+
+诊断：detector 不只定位，也在**隐式 ROI 清理** —— 它的 bbox 把 icon 边缘排除在 recognizer 输入外。关掉后 recognizer 看到整张 crop（含 icon silhouette），多 crop voting 也救不了，因为 icon 噪声跨 crop 是一致的，voting 收敛到错误值。
+
+### Hybrid no-det 快路径 + det engine 兜底（commits f26032c + 50fd775 + 1d8ee36）
+
+- **A0a** (`f26032c`): 把 detector 参数从 per-call kwargs 移到 `RapidOCR(...)` 构造期，去掉单例 mutable state。**重要陷阱**：rapidocr-onnxruntime 1.2.3 的 `UpdateParameters.update_det_params` 访问 `det_dict['model_path']`，必须显式传 `det_model_path=None` 否则 KeyError
+- **A0c** (`50fd775`): `_get_engine(use_text_det: bool)` 维护两个 singleton（det / no-det），`ocr_digits(image, *, use_text_det=True)` 选择路径。新增 `parse_quantity_string_strict`（无 leading-junk rescue），用于早停证据。`_ocr_inventory_quantity` 改成两阶段：
+  - **Phase 1**: 12 个 no-det 调用（6 fracs × raw+prepared）
+  - **证据门控**: top value ≠ 0，distinct fracs 严格大于第二名，且（≥3 distinct fracs OR ≥2 distinct fracs + max conf ≥ 0.50 + 至少一个 tight crop ≥0.60）。**wide-only 拒绝**是关键 —— 26→226 这种"宽 crop 一致犯错"会 fallback，不会被当成强证据
+  - **Phase 2 fallback**: 12 个 det 调用 + 现有 `parse_ocr_result` rescue voting（保留 `.80`/`Lv.80` 兜底）
+- **Stage A** (`1d8ee36`): det fallback 加 distinct-frac 早停：第 2 frac 后若 ≥2 distinct fracs + max conf ≥ 0.6 + 严格多数则返回；第 4 frac 后收紧到 ≥3 distinct fracs OR (best - second) ≥ 2
+
+天花板预算：单图 < 15s。实测：
+
+| 图 | Pre-commit | 最终 | 加速 |
+|---|---|---|---|
+| IMG_9590 (29 slots, 单面板) | 38.19s | 10.58s | 3.6× |
+| IMG_9592 (44 slots, 武陵双面板) | 41.79s | 15.22s | 2.7× |
+
+质量：18/18 + 16/16 items 与 baseline 完全一致。所有 anchor 通过：燎石=76、中红柱状菌=89、折金票=6881809、象限拟合液=1（单数字）、轻黯石=207（3 位数 fallback case）。
+
+### 范围控制
+
+只改了 inventory。**weapons / operators / 折金票**（`_recognize_top_bar_currency`）保持原 det 路径 —— 没有私有截图 benchmark 不冒进。Stage B（thread-pool 并行 OCR）提议中断 —— 单图目标已达成，并行带来线程安全 + 内存复杂度不值。如果以后批量上传需要再说。
+
+### 工具留存
+
+`backend/scripts/benchmark_ocr.py` 留作回归 benchmark 工具（commit `3a671f7`），支持 `--mode {current, no-det}`，未来任何 OCR 性能改动都可以用它验证 "still under budget + zero regression"。验证 spike `benchmark_hybrid.py` 已删除。
+
+---
+
 ## 2026-04-28 · 武器 / 库存识别全面打通 · 干员模板补齐至 26/26
 
 继续上一轮的格子检测修复，这一轮把识别管线剩下的几个硬伤也清掉。当前**真实游戏截图**对所有四类（材料 / 干员 / 武器 / 库存）都能稳定识别。

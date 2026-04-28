@@ -107,7 +107,7 @@ Windows PowerShell（高级用户）：
 
 ### 截图识别（后端）
 
-- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认；三档 EXP 作战记录（初级 / 中级 / 高级）现在靠颜色区分而不会全部塌成同一个模板
+- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认；三档 EXP 作战记录（初级 / 中级 / 高级）现在靠颜色区分而不会全部塌成同一个模板。**Hybrid OCR 路径**（无 detector 快通道 + det engine 兜底 + 早停）让单图端到端 ~10-15s（此前 38-42s，3-4× 提速）；详见 `docs/CHANGELOG.md` 的 2026-04-28（晚些时候）条目
 - **干员列表截图** → 自动识别干员与当前等级；等级文字（`Lv.XX`）用多裁剪 OCR（底部 0.30 / 0.40 / 0.50 / 0.60 各试一次，取解析出数字最多的那次），能识别单独的 "1" / "5" 这类 OCR 默认丢掉的孤立单数字
 - **武器列表截图** → 同一条干员 pipeline，`POST /recognize/weapons`
 - **多图上传 + 去重**：三种识别入口都支持一次拖多张图，后端串行处理（UI 显示 `PROCESSING 2/5...`），前端 `logic/recognition-merge.ts` 按 id 去重（材料/干员/武器），数值字段取 `max`，bbox 和置信度跟随置信度更高的那次观察
@@ -158,7 +158,7 @@ node start.mjs label-tool
 cd frontend && pnpm test
 ```
 
-后端（55 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点含删除 + /state 跨浏览器同步）：
+后端（66 个单测：pipeline 模块 + endpoint 集成 + 武器识别端点 + dev 标注端点含删除 + /state 跨浏览器同步 + 严格数字解析器 `parse_quantity_string_strict`）：
 
 ```bash
 cd backend && source .venv/bin/activate && pytest -v
