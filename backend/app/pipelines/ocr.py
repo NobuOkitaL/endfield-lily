@@ -27,7 +27,12 @@ def _get_engine():
     if _engine is None:
         # RapidOCR is the installed backend for this project
         from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
-        _engine = RapidOCR()
+        _engine = RapidOCR(
+            text_score=0.1,
+            det_model_path=None,
+            det_box_thresh=0.1,
+            det_unclip_ratio=3.0,
+        )
     return _engine
 
 
@@ -119,18 +124,16 @@ def ocr_digits(image: np.ndarray) -> tuple[str, float]:
     Uses rapidocr-onnxruntime as the backend (lazy init on first call).
     Returns ("", 0.0) when no text is detected.
 
-    We pass relaxed detection params (`text_score`, `box_thresh`,
-    `unclip_ratio`) because the defaults reject isolated single digits like
-    "1" or "5" on game quantity cards — the detector thinks a narrow single
-    glyph isn't a text region. With the defaults, `engine(qr)` sometimes
-    returns None even when the digit is clearly visible; the looser params
-    produce a stable ~0.5 confidence result. The safety net is still
+    The engine is constructed with relaxed detection params (`text_score`,
+    `det_box_thresh`, `det_unclip_ratio`) because the defaults reject isolated
+    single digits like "1" or "5" on game quantity cards — the detector thinks
+    a narrow single glyph isn't a text region. With the defaults, `engine(qr)`
+    sometimes returns None even when the digit is clearly visible; the looser
+    params produce a stable ~0.5 confidence result. The safety net is still
     `parse_quantity_string` which rejects non-digit strings.
     """
     engine = _get_engine()
-    result, _elapse = engine(
-        image, text_score=0.1, box_thresh=0.1, unclip_ratio=3.0
-    )
+    result, _elapse = engine(image)
 
     if not result:
         return "", 0.0
