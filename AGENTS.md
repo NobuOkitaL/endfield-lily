@@ -36,7 +36,7 @@ OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; 
 
 **Labeled-tracker design**: `backend/app/assets/{asset_type}.labeled.json` is kept **separate** from the shipped name→file mapping. It only records which names the dev has captured real-game templates for; the shipped mapping ships with end.wiki renders. `save-templates` skips entries already in the tracker (returns `{saved, skipped[]}`). The label-tool UI reads both to show progress counters and `（已标注）` suffixes.
 
-Recognition only works for labeled assets — anything else gets a low-confidence best-guess in `unknowns`. Current coverage: materials 34/36, operators 9/26, weapons 20/68.
+Recognition only works for labeled assets — anything else gets a low-confidence best-guess in `unknowns`. Current coverage: materials 36/36, operators 26/26, weapons 55/68.
 
 ## Commands
 

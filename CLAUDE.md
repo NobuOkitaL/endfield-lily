@@ -37,7 +37,7 @@ OCR backend is **rapidocr-onnxruntime** (Python 3.14 has no PaddlePaddle wheel; 
 
 **Labeled-tracker design**: `backend/app/assets/{asset_type}.labeled.json` is kept **separate** from the shipped name→file mapping. It only records which names the dev has captured real-game templates for; the shipped mapping ships with end.wiki renders. `save-templates` accepts `overwrite: bool = False` — when `false`, entries already in the tracker are skipped (returned in `skipped[]`); when `true`, they're rewritten and reported in `overwritten[]`. The label-tool UI runs a **two-pass save** with `window.confirm` between passes: first POST without `overwrite`, then if `skipped` is non-empty ask the user, then optionally re-POST the skipped subset with `overwrite=true`. Toast text breaks down by `已保存 X 条，覆盖 Y 条，跳过 Z 条`. Dropdown items also carry `（已标注）` suffix so users can see at glance.
 
-Recognition only works for labeled assets — anything else gets a low-confidence best-guess in `unknowns`. Current coverage: materials 34/36, operators 26/26, weapons 55/68.
+Recognition only works for labeled assets — anything else gets a low-confidence best-guess in `unknowns`. Current coverage: materials 36/36 (折金票 recognized via fixed-region OCR — listed in tracker for tooling consistency, no PNG template), operators 26/26, weapons 55/68.
 
 ## Commands
 

@@ -66,6 +66,6 @@ pip install -r requirements.txt
 - `app/assets/{materials,operators,weapons}.labeled.json` — 开发者用真游戏截图标注过的名字集合（与 shipped mapping 分开；`save-templates` 遇到 tracker 里已有的名字会 skip）
 - `app/assets/{materials,operators,weapons}/*.png` — 实际的模板图文件
 
-真游戏截图模板通过 `label-tool/`（端口 5174）采集。当前覆盖：材料 34/36 · 干员 26/26 · 武器 55/68。
+真游戏截图模板通过 `label-tool/`（端口 5174）采集。当前覆盖：材料 36/36 · 干员 26/26 · 武器 55/68（折金票计入材料但无 PNG 模板，走固定区域 OCR）。
 
 详见 `../CLAUDE.md` 里 "Recognition algorithm" 一节了解当前的像素差 + 多裁剪 OCR + best-guess 预填管线。
