@@ -1,32 +1,118 @@
 #!/usr/bin/env node
 /**
- * 跨平台启动器（macOS / Linux / Windows 通用）。
- *   用法：  node start.mjs
+ * Cross-platform service launcher for 总控核心 Lily.
  *
- * 首次运行会：
- *   - 建 Python venv + 装 backend/requirements.txt 的依赖
- *   - 跑 pnpm install
- * 然后同时起 uvicorn（后端 :8000）和 vite（前端 :5173）。
- * Ctrl+C 时会清理两个子进程。
+ * Usage:
+ *   node start.mjs                         # backend + frontend + label-tool
+ *   node start.mjs all                     # backend + frontend + label-tool
+ *   node start.mjs backend
+ *   node start.mjs frontend label-tool
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = dirname(fileURLToPath(import.meta.url));
 const IS_WIN = process.platform === 'win32';
+const SERVICES = ['backend', 'frontend', 'label-tool'];
+const COLORS = {
+  backend: '\x1b[35m',
+  frontend: '\x1b[36m',
+  'label-tool': '\x1b[32m',
+  reset: '\x1b[0m',
+};
 
-// ─── Pick a working python ──────────────────────────────────────────────────
+const children = [];
+let shuttingDown = false;
+
+function usage() {
+  console.log('Usage: node start.mjs [all|backend|frontend|label-tool] [...]');
+  console.log('');
+  console.log('Examples:');
+  console.log('  node start.mjs');
+  console.log('  node start.mjs backend');
+  console.log('  node start.mjs backend frontend');
+  console.log('  node start.mjs label-tool');
+}
+
+function fileExists(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function dirExists(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function parseServices(argv) {
+  const args = argv.length === 0 ? ['all'] : argv;
+  const normalized = args.map((arg) => arg.trim()).filter(Boolean);
+  if (normalized.length === 0) {
+    return SERVICES;
+  }
+  if (normalized.includes('all')) {
+    if (normalized.length > 1) {
+      console.log('[start.mjs] "all" includes backend, frontend, and label-tool; ignoring other service args.');
+    }
+    return SERVICES;
+  }
+
+  const unknown = normalized.filter((arg) => !SERVICES.includes(arg));
+  if (unknown.length > 0) {
+    console.error(`[start.mjs] Unknown service: ${unknown.join(', ')}`);
+    usage();
+    process.exit(1);
+  }
+
+  return [...new Set(normalized)];
+}
+
+function hasCommand(cmd) {
+  try {
+    const result = spawnSync(cmd, ['--version'], {
+      encoding: 'utf8',
+      shell: needsShell(cmd),
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function run(cmd, args, opts = {}) {
+  const result = spawnSync(cmd, args, {
+    stdio: 'inherit',
+    shell: needsShell(cmd),
+    ...opts,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`${cmd} ${args.join(' ')} exited with code ${result.status}`);
+  }
+}
+
 function detectPython() {
   const candidates = IS_WIN ? ['py', 'python', 'python3'] : ['python3', 'python'];
   for (const cmd of candidates) {
     try {
-      const r = spawnSync(cmd, ['--version'], { encoding: 'utf8' });
-      const out = `${r.stdout || ''}${r.stderr || ''}`;
-      const m = out.match(/Python (\d+)\.(\d+)/);
-      if (m && (Number(m[1]) > 3 || (Number(m[1]) === 3 && Number(m[2]) >= 11))) {
+      const result = spawnSync(cmd, ['--version'], {
+        encoding: 'utf8',
+        shell: false,
+      });
+      const output = `${result.stdout || ''}${result.stderr || ''}`;
+      const match = output.match(/Python (\d+)\.(\d+)/);
+      if (match && (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) >= 11))) {
         return cmd;
       }
     } catch {}
@@ -40,122 +126,228 @@ function venvPython() {
     : join(REPO, 'backend', '.venv', 'bin', 'python');
 }
 
-function hasCommand(cmd) {
-  try {
-    const r = spawnSync(cmd, ['--version'], { encoding: 'utf8' });
-    return r.status === 0;
-  } catch {
+function backendDepsReady(pythonPath) {
+  if (!fileExists(pythonPath)) {
     return false;
   }
+
+  const result = spawnSync(
+    pythonPath,
+    ['-m', 'pip', 'show', 'fastapi', 'uvicorn', 'opencv-python', 'rapidocr-onnxruntime'],
+    {
+      cwd: join(REPO, 'backend'),
+      encoding: 'utf8',
+      shell: false,
+    },
+  );
+  return result.status === 0;
 }
 
-// Run a command synchronously, inheriting stdio, die on failure
-function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
-    stdio: 'inherit',
-    shell: IS_WIN, // pnpm / pip scripts on Windows are .cmd files — need shell
-    ...opts,
-  });
-  if (r.status !== 0) {
-    console.error(`[start.mjs] Command failed: ${cmd} ${args.join(' ')}`);
-    process.exit(r.status || 1);
+function ensureBackend() {
+  const python = detectPython();
+  if (!python) {
+    throw new Error('Python 3.11+ not found. Install from https://www.python.org/ and add it to PATH.');
   }
-}
 
-// ─── Backend setup ──────────────────────────────────────────────────────────
-const py = detectPython();
-if (!py) {
-  console.error('[start.mjs] Python 3.11+ not found. Install from https://www.python.org/');
-  console.error('                Windows users: check "Add Python to PATH" during install.');
-  process.exit(1);
-}
-console.log(`[start.mjs] Using Python: ${py}`);
+  const pythonPath = venvPython();
+  if (backendDepsReady(pythonPath)) {
+    console.log(`[start.mjs] backend deps ready (${pythonPath})`);
+    return;
+  }
 
-const venvPy = venvPython();
-if (!existsSync(venvPy)) {
-  console.log('[start.mjs] Creating backend venv (first-run, ~3-5 min)...');
-  run(py, ['-m', 'venv', '.venv'], { cwd: join(REPO, 'backend') });
-  run(venvPy, ['-m', 'pip', 'install', '--upgrade', 'pip']);
-  run(venvPy, ['-m', 'pip', 'install', '-r', 'requirements.txt'], {
+  console.log(`[start.mjs] Preparing backend venv with ${python}...`);
+  run(python, ['-m', 'venv', '.venv'], { cwd: join(REPO, 'backend') });
+  run(pythonPath, ['-m', 'pip', 'install', '--upgrade', 'pip']);
+  run(pythonPath, ['-m', 'pip', 'install', '-r', 'requirements.txt'], {
     cwd: join(REPO, 'backend'),
   });
 }
 
-// ─── Frontend setup ─────────────────────────────────────────────────────────
-if (!hasCommand('pnpm')) {
-  console.error('[start.mjs] pnpm not found. Install via: npm install -g pnpm');
-  console.error('                (or enable corepack: corepack enable)');
-  process.exit(1);
-}
-if (!existsSync(join(REPO, 'frontend', 'node_modules'))) {
-  console.log('[start.mjs] Installing frontend deps (pnpm install)...');
-  run('pnpm', ['install'], { cwd: join(REPO, 'frontend') });
+function nodeModulesReady(serviceDir) {
+  const nodeModules = join(serviceDir, 'node_modules');
+  return (
+    dirExists(nodeModules) &&
+    fileExists(join(nodeModules, '.modules.yaml')) &&
+    dirExists(join(nodeModules, '.pnpm'))
+  );
 }
 
-// ─── Launch backend + frontend in parallel ─────────────────────────────────
-const children = [];
+function ensurePnpm() {
+  if (!hasCommand('pnpm')) {
+    throw new Error('pnpm not found. Install via: npm install -g pnpm (or run: corepack enable).');
+  }
+}
 
-function launch(label, cmd, args, cwd, color = '\x1b[36m') {
+function needsShell(cmd) {
+  return IS_WIN && cmd === 'pnpm';
+}
+
+function ensureNodeService(serviceName) {
+  ensurePnpm();
+  const serviceDir = join(REPO, serviceName);
+  if (nodeModulesReady(serviceDir)) {
+    console.log(`[start.mjs] ${serviceName} deps ready`);
+    return;
+  }
+
+  console.log(`[start.mjs] Installing ${serviceName} deps (pnpm install)...`);
+  run('pnpm', ['install'], { cwd: serviceDir });
+}
+
+function prefixStream(stream, target, tag) {
+  let buffer = '';
+  stream.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (line.length > 0) {
+        target.write(`${tag} ${line}\n`);
+      }
+    }
+  });
+  stream.on('end', () => {
+    if (buffer.length > 0) {
+      target.write(`${tag} ${buffer}\n`);
+      buffer = '';
+    }
+  });
+}
+
+function launch(serviceName, cmd, args, cwd) {
+  const tag = `${COLORS[serviceName]}[${serviceName}]${COLORS.reset}`;
   const child = spawn(cmd, args, {
     cwd,
-    shell: IS_WIN,
+    shell: needsShell(cmd),
+    detached: !IS_WIN,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const tag = `${color}[${label}]\x1b[0m`;
 
-  child.stdout.on('data', (d) => {
-    process.stdout.write(
-      d.toString()
-        .split(/\r?\n/)
-        .filter((l) => l.length > 0)
-        .map((l) => `${tag} ${l}`)
-        .join('\n') + '\n',
-    );
+  child.serviceName = serviceName;
+  prefixStream(child.stdout, process.stdout, tag);
+  prefixStream(child.stderr, process.stderr, tag);
+
+  child.on('error', (error) => {
+    console.error(`${tag} failed to start: ${error.message}`);
   });
-  child.stderr.on('data', (d) => {
-    process.stderr.write(
-      d.toString()
-        .split(/\r?\n/)
-        .filter((l) => l.length > 0)
-        .map((l) => `${tag} ${l}`)
-        .join('\n') + '\n',
-    );
-  });
-  child.on('exit', (code) => {
-    console.log(`${tag} exited with code ${code}`);
+
+  child.on('exit', (code, signal) => {
+    const index = children.indexOf(child);
+    if (index >= 0) {
+      children.splice(index, 1);
+    }
+    const reason = signal ? `signal ${signal}` : `code ${code}`;
+    console.log(`${tag} exited with ${reason}`);
+    if (!shuttingDown && children.length === 0) {
+      process.exit(code || 0);
+    }
   });
 
   children.push(child);
   return child;
 }
 
-console.log('');
-console.log('[start.mjs] Launching services...');
-launch('backend', venvPy, ['-m', 'uvicorn', 'app.main:app', '--port', '8000', '--reload'], join(REPO, 'backend'), '\x1b[35m');
-launch('frontend', 'pnpm', ['dev'], join(REPO, 'frontend'), '\x1b[36m');
+const SERVICE_CONFIG = {
+  backend: {
+    setup: ensureBackend,
+    launch: () =>
+      launch(
+        'backend',
+        venvPython(),
+        ['-m', 'uvicorn', 'app.main:app', '--port', '8000', '--reload'],
+        join(REPO, 'backend'),
+      ),
+    url: 'Backend:    http://localhost:8000/docs',
+  },
+  frontend: {
+    setup: () => ensureNodeService('frontend'),
+    launch: () => launch('frontend', 'pnpm', ['dev'], join(REPO, 'frontend')),
+    url: 'Frontend:   http://localhost:5173',
+  },
+  'label-tool': {
+    setup: () => ensureNodeService('label-tool'),
+    launch: () => launch('label-tool', 'pnpm', ['dev'], join(REPO, 'label-tool')),
+    url: 'Label tool: http://localhost:5174',
+  },
+};
+
+function terminateChild(child) {
+  if (!child.pid) {
+    return;
+  }
+
+  try {
+    if (IS_WIN) {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' });
+    } else {
+      process.kill(-child.pid, 'SIGTERM');
+    }
+  } catch {}
+}
+
+function shutdown() {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log('\n[start.mjs] Stopping services...');
+
+  for (const child of [...children].reverse()) {
+    terminateChild(child);
+  }
+
+  const forceTimer = setTimeout(() => {
+    for (const child of [...children].reverse()) {
+      try {
+        if (IS_WIN) {
+          spawnSync('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' });
+        } else {
+          process.kill(-child.pid, 'SIGKILL');
+        }
+      } catch {}
+    }
+    process.exit(0);
+  }, 2500);
+
+  const waitTimer = setInterval(() => {
+    if (children.length === 0) {
+      clearInterval(waitTimer);
+      clearTimeout(forceTimer);
+      process.exit(0);
+    }
+  }, 100);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+const selectedServices = parseServices(process.argv.slice(2));
+const launched = [];
+
+console.log(`[start.mjs] Repo: ${REPO}`);
+console.log(`[start.mjs] Services: ${selectedServices.join(', ')}`);
+
+for (const serviceName of selectedServices) {
+  const service = SERVICE_CONFIG[serviceName];
+  try {
+    service.setup();
+    service.launch();
+    launched.push(serviceName);
+  } catch (error) {
+    console.error(`[start.mjs] ${serviceName} failed: ${error.message}`);
+  }
+}
+
+if (launched.length === 0) {
+  console.error('[start.mjs] No services were started.');
+  process.exit(1);
+}
 
 console.log('');
 console.log('[start.mjs] Ready:');
-console.log('   Frontend: http://localhost:5173');
-console.log('   Backend:  http://localhost:8000/docs');
-console.log('');
-console.log('Press Ctrl+C to stop both.');
-console.log('');
-
-// ─── Cleanup on Ctrl+C / SIGTERM / main exit ───────────────────────────────
-function shutdown() {
-  console.log('\n[start.mjs] Stopping services...');
-  for (const c of children) {
-    try {
-      if (IS_WIN) {
-        // taskkill is the reliable way to stop the whole tree on Windows
-        spawnSync('taskkill', ['/pid', String(c.pid), '/f', '/t'], { stdio: 'ignore' });
-      } else {
-        c.kill('SIGTERM');
-      }
-    } catch {}
-  }
-  process.exit(0);
+for (const serviceName of launched) {
+  console.log(`  ${SERVICE_CONFIG[serviceName].url}`);
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+console.log('');
+console.log('Press Ctrl+C to stop.');
+console.log('');
