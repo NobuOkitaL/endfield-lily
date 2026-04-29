@@ -25,6 +25,23 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+
+def _imread_unicode(path: Path) -> np.ndarray | None:
+    """Unicode-safe replacement for ``cv2.imread``. OpenCV's imread on Windows
+    routes through ANSI string APIs and silently fails on non-ASCII paths
+    (e.g. ``燎石.png``). Reading bytes via ``np.fromfile`` uses Python's
+    Unicode-aware I/O, then ``cv2.imdecode`` does the actual decode.
+    Mirrors ``IMREAD_UNCHANGED`` so RGBA PNGs keep their alpha channel.
+    """
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -373,7 +390,7 @@ class TemplateLibrary:
         avatar_mask = _avatar_mask_for_asset_type(lib._asset_type)
         for name, rel in mapping.items():
             path = assets_dir.parent / rel
-            img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            img = _imread_unicode(path)
             if img is None:
                 continue
             lib._raw_templates[name] = img

@@ -21,6 +21,22 @@ router = APIRouter(prefix="/dev", tags=["dev"])
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
+
+def _imwrite_unicode(path: Path, image: np.ndarray) -> bool:
+    """Unicode-safe replacement for ``cv2.imwrite``. OpenCV's imwrite on
+    Windows routes through ANSI string APIs and silently fails on non-ASCII
+    paths (e.g. ``燎石.png``). Encode in-memory then ``ndarray.tofile`` writes
+    via Python's Unicode-aware I/O.
+    """
+    success, buf = cv2.imencode(path.suffix, image)
+    if not success:
+        return False
+    try:
+        buf.tofile(str(path))
+    except OSError:
+        return False
+    return True
+
 # Minimum slot dimension (px) on the 1080p normalized canvas. 贵重品库 slots
 # are ~147px but 武陵仓库 main-grid slots are ~68px, so we floor at 50 to let
 # both pass. Anything below 50 is almost certainly UI chrome / noise.
@@ -277,7 +293,7 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
                 detail=f"Could not decode PNG for {entry.name}",
             )
         out_path = subdir / f"{entry.name}.png"
-        success = cv2.imwrite(str(out_path), decoded)
+        success = _imwrite_unicode(out_path, decoded)
         if not success:
             raise HTTPException(
                 status_code=500,
