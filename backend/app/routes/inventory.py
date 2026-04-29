@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
+import time
 from pathlib import Path
 
 import cv2
@@ -10,6 +12,7 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
+from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import (
     PARSEABLE_CONFIDENCE_FLOOR,
@@ -19,6 +22,8 @@ from app.pipelines.ocr import (
 )
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/recognize", tags=["recognize"])
 
@@ -78,7 +83,13 @@ def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
 
 
 def _ocr_inventory_quantity(
-    canvas: np.ndarray, x: int, y: int, w: int, eff_h: int
+    canvas: np.ndarray,
+    x: int,
+    y: int,
+    w: int,
+    eff_h: int,
+    counters: dict[str, int] | None = None,
+    route_out: list[str] | None = None,
 ) -> tuple[str, float, int | None]:
     """Run no-det OCR first, then fall back to detector OCR voting.
 
@@ -133,7 +144,14 @@ def _ocr_inventory_quantity(
             )
         )
         if strong:
+            if counters is not None:
+                counters["fastpath"] += 1
+            if route_out is not None:
+                route_out.append("fastpath")
             return top_data["best_rt"], top_data["max_conf"], top_value
+
+    if counters is not None:
+        counters["fallback"] += 1
 
     strict_candidates: list[tuple[int, float, str, float]] = []
     candidates: list[tuple[int, float, str]] = []
@@ -179,15 +197,25 @@ def _ocr_inventory_quantity(
                     and top_data["max_conf"] >= 0.60
                     and top_frac_count > second_frac_count
                 ):
+                    if counters is not None:
+                        counters["early_exit"] += 1
+                    if route_out is not None:
+                        route_out.append("fallback")
                     return top_data["best_rt"], top_data["max_conf"], top_value
             elif index >= 3:
                 if (
                     top_frac_count >= 3
                     or (top_frac_count - second_frac_count) >= 2
                 ):
+                    if counters is not None and index < len(_QTY_CROP_FRACS) - 1:
+                        counters["early_exit"] += 1
+                    if route_out is not None:
+                        route_out.append("fallback")
                     return top_data["best_rt"], top_data["max_conf"], top_value
 
     if not candidates:
+        if route_out is not None:
+            route_out.append("unknown")
         return det_first_rt or first_rt, det_first_cf or first_cf, None
 
     grouped: dict[int, list[tuple[float, str]]] = {}
@@ -203,6 +231,8 @@ def _ocr_inventory_quantity(
         ),
     )
     cf, rt = max(grouped[chosen], key=lambda item: item[0])
+    if route_out is not None:
+        route_out.append("fallback")
     return rt, cf, chosen
 
 
@@ -268,35 +298,80 @@ async def recognize_inventory(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    rid = make_request_id("inv")
+    t_start = time.perf_counter()
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
+    canvas_h, canvas_w = canvas.shape[:2]
+    _log.info(
+        "[%s] POST /recognize/inventory  (%.1fMB, %dx%d)",
+        rid,
+        len(raw) / (1024 * 1024),
+        canvas_w,
+        canvas_h,
+    )
+
     # 武陵仓库 main-grid slots are small (~68px); 7×7 close kernel surfaces
     # them reliably without over-merging neighbors.
+    t0 = time.perf_counter()
     slots = detect_slots(canvas, close_kernel=7)
-    canvas_h = canvas.shape[0]
+    _log.info(
+        "[%s] detect_slots: %d cells (%.2fs)",
+        rid,
+        len(slots),
+        time.perf_counter() - t0,
+    )
     # edge_lattice augmentation can return undersized cells whose bbox ends
     # above the level/quantity text. Extend the OCR region down to the
     # P75 slot height (same trick operators / weapons routes use) so short
     # bboxes still capture the digit row.
     target_h = p75_height(list(slots))
 
+    t0 = time.perf_counter()
     library = _load_library()
-    items: list[dict] = []
-    unknowns: list[dict] = []
-
+    slot_matches = []
+    n_strong = 0
+    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
-
-        eff_h = min(max(h, target_h), canvas_h - y)
-        raw_text, conf, quantity = _ocr_inventory_quantity(canvas, x, y, w, eff_h)
-
-        # Run matching with threshold=0 so best_guess is always populated,
-        # then apply the real threshold ourselves. This lets unknowns pre-fill
-        # a sensible dropdown instead of defaulting to the first option.
         best = match_slot(icon, library, threshold=0.0)
+        above_threshold = best.confidence >= 0.80
+        if above_threshold:
+            n_strong += 1
+        else:
+            n_weak += 1
+        slot_matches.append((bbox, best))
+    _log.info(
+        "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
+        rid,
+        len(library),
+        n_strong,
+        n_weak,
+        time.perf_counter() - t0,
+    )
+
+    items: list[dict] = []
+    unknowns: list[dict] = []
+    ocr_counters = {"fastpath": 0, "fallback": 0, "early_exit": 0}
+
+    t0 = time.perf_counter()
+    for idx, (bbox, best) in enumerate(slot_matches):
+        x, y, w, h = bbox
+        eff_h = min(max(h, target_h), canvas_h - y)
+        route_out: list[str] = []
+        raw_text, conf, quantity = _ocr_inventory_quantity(
+            canvas,
+            x,
+            y,
+            w,
+            eff_h,
+            counters=ocr_counters,
+            route_out=route_out,
+        )
+        route = route_out[0] if route_out else "unknown"
         above_threshold = best.confidence >= 0.80
 
         # Slot goes to unknowns only when the template match itself is weak.
@@ -315,6 +390,19 @@ async def recognize_inventory(image: UploadFile = File(...)):
                     "best_guess_quantity": quantity,
                 }
             )
+            _log.debug(
+                "[%s] slot %d/%d bbox=%s match=%s conf=%.3f ocr=%r qty=%s "
+                "route=%s",
+                rid,
+                idx + 1,
+                len(slot_matches),
+                bbox,
+                best.material_id,
+                best.confidence,
+                raw_text,
+                quantity,
+                route,
+            )
             continue
 
         match = best
@@ -330,9 +418,37 @@ async def recognize_inventory(image: UploadFile = File(...)):
                 "bbox": _bbox_to_list(bbox),
             }
         )
+        _log.debug(
+            "[%s] slot %d/%d bbox=%s match=%s conf=%.3f ocr=%r qty=%s route=%s",
+            rid,
+            idx + 1,
+            len(slot_matches),
+            bbox,
+            match.material_id,
+            match.confidence,
+            raw_text,
+            quantity,
+            route,
+        )
 
     currency = _recognize_top_bar_currency(canvas)
     if currency is not None:
         items.append(currency)
 
+    _log.info(
+        "[%s] OCR: %d no-det accepted, %d detector fallback, %d early exits "
+        "(%.2fs)",
+        rid,
+        ocr_counters["fastpath"],
+        ocr_counters["fallback"],
+        ocr_counters["early_exit"],
+        time.perf_counter() - t0,
+    )
+    _log.info(
+        "[%s] done in %.2fs → %d items, %d unknowns",
+        rid,
+        time.perf_counter() - t_start,
+        len(items),
+        len(unknowns),
+    )
     return {"items": items, "unknowns": unknowns}

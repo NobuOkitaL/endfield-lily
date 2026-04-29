@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import re
+import time
 from pathlib import Path
 
 import cv2
@@ -11,10 +13,13 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
+from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import ocr_digits, parse_ocr_result
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/recognize", tags=["recognize"])
 
@@ -23,6 +28,7 @@ _OPERATORS_JSON = _ASSETS_DIR / "operators.json"
 
 # Strip "Lv." or "Lv" prefix before parsing level number
 _LV_PREFIX_RE = re.compile(r"^\s*Lv\.?\s*", re.IGNORECASE)
+_OPERATOR_LEVEL_CROP_FRACS = (0.70, 0.60, 0.50, 0.40)
 
 
 def _load_library() -> TemplateLibrary:
@@ -65,13 +71,30 @@ async def recognize_operators(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    rid = make_request_id("op")
+    t_start = time.perf_counter()
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
+    canvas_h, canvas_w = canvas.shape[:2]
+    _log.info(
+        "[%s] POST /recognize/operators  (%.1fMB, %dx%d)",
+        rid,
+        len(raw) / (1024 * 1024),
+        canvas_w,
+        canvas_h,
+    )
+
     # 5 is the kernel the user's labeled templates were captured with;
     # changing it here invalidates those labels.
+    t0 = time.perf_counter()
     slots = detect_slots(canvas, close_kernel=5)
-    canvas_h = canvas.shape[0]
+    _log.info(
+        "[%s] detect_slots: %d cells (%.2fs)",
+        rid,
+        len(slots),
+        time.perf_counter() - t0,
+    )
     # Otsu sometimes crops operator cards right at the portrait/rarity-strip
     # boundary, losing the "Lv.XX" text below. Extend the OCR region down to
     # the taller P75 card height when the current bbox is shorter. Template
@@ -79,15 +102,37 @@ async def recognize_operators(image: UploadFile = File(...)):
     # captured at the short height) — only the level-text crop is extended.
     target_h = p75_height(list(slots))
 
+    t0 = time.perf_counter()
     library = _load_library()
-    items: list[dict] = []
-    unknowns: list[dict] = []
-
+    slot_matches = []
+    n_strong = 0
+    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         portrait_h = int(h * 0.7)
         portrait = canvas[y : y + portrait_h, x : x + w]
+        best = match_slot(portrait, library, threshold=0.0)
+        above_threshold = best.confidence >= 0.80
+        if above_threshold:
+            n_strong += 1
+        else:
+            n_weak += 1
+        slot_matches.append((bbox, best))
+    _log.info(
+        "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
+        rid,
+        len(library),
+        n_strong,
+        n_weak,
+        time.perf_counter() - t0,
+    )
 
+    items: list[dict] = []
+    unknowns: list[dict] = []
+
+    t0 = time.perf_counter()
+    for bbox, best in slot_matches:
+        x, y, w, h = bbox
         # Effective slot height for OCR: extend down to P75 if this bbox is
         # shorter, clamped to the canvas bottom.
         eff_h = min(max(h, target_h), canvas_h - y)
@@ -98,7 +143,7 @@ async def recognize_operators(image: UploadFile = File(...)):
         # the most digits / highest confidence.
         candidates: list[tuple[int, float, str, int]] = []
         first_rt, first_cf = "", 0.0
-        for crop_frac in (0.70, 0.60, 0.50, 0.40):
+        for crop_frac in _OPERATOR_LEVEL_CROP_FRACS:
             region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
             rt, cf = ocr_digits(region)
             stripped = _strip_lv_prefix(rt)
@@ -113,8 +158,6 @@ async def recognize_operators(image: UploadFile = File(...)):
         else:
             raw_text, conf, level = first_rt, first_cf, None
 
-        # Template match with threshold=0 so best_guess is always available.
-        best = match_slot(portrait, library, threshold=0.0)
         above_threshold = best.confidence >= 0.80
 
         # Weak template match → unknowns (regardless of OCR outcome).
@@ -144,4 +187,18 @@ async def recognize_operators(image: UploadFile = File(...)):
             }
         )
 
+    _log.info(
+        "[%s] OCR: %d slots × %d crops, det engine (%.2fs)",
+        rid,
+        len(slot_matches),
+        len(_OPERATOR_LEVEL_CROP_FRACS),
+        time.perf_counter() - t0,
+    )
+    _log.info(
+        "[%s] done in %.2fs → %d items, %d unknowns",
+        rid,
+        time.perf_counter() - t_start,
+        len(items),
+        len(unknowns),
+    )
     return {"items": items, "unknowns": unknowns}

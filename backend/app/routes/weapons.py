@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import re
+import time
 from pathlib import Path
 
 import cv2
@@ -11,10 +13,13 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from PIL import Image
 
+from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import ocr_digits, parse_ocr_result, parse_quantity_string
 from app.pipelines.preprocess import load_and_normalize
 from app.pipelines.template_match import TemplateLibrary, match_slot
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/recognize", tags=["recognize"])
 
@@ -180,26 +185,65 @@ async def recognize_weapons(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    rid = make_request_id("wpn")
+    t_start = time.perf_counter()
     raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
+    canvas_h, canvas_w = canvas.shape[:2]
+    _log.info(
+        "[%s] POST /recognize/weapons  (%.1fMB, %dx%d)",
+        rid,
+        len(raw) / (1024 * 1024),
+        canvas_w,
+        canvas_h,
+    )
+
     # 5 is the kernel the user's labeled templates were captured with;
     # changing it here invalidates those labels.
+    t0 = time.perf_counter()
     slots = _filter_weapon_grid_slots(
         detect_slots(canvas, close_kernel=5), canvas.shape[1]
     )
+    _log.info(
+        "[%s] detect_slots: %d cells (%.2fs)",
+        rid,
+        len(slots),
+        time.perf_counter() - t0,
+    )
     target_h = p75_height(list(slots))
 
+    t0 = time.perf_counter()
     library = _load_library()
-    items: list[dict] = []
-    unknowns: list[dict] = []
-
+    slot_matches = []
+    n_strong = 0
+    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
-
         best = match_slot(icon, library, threshold=0.0)
+        above_threshold = best.confidence >= 0.80
+        if above_threshold:
+            n_strong += 1
+        else:
+            n_weak += 1
+        slot_matches.append((bbox, best))
+    _log.info(
+        "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
+        rid,
+        len(library),
+        n_strong,
+        n_weak,
+        time.perf_counter() - t0,
+    )
+
+    items: list[dict] = []
+    unknowns: list[dict] = []
+
+    t0 = time.perf_counter()
+    for bbox, best in slot_matches:
+        x, y, w, h = bbox
         above_threshold = best.confidence >= 0.80
 
         raw_text, conf, level = _ocr_weapon_level(canvas, bbox, target_h)
@@ -229,4 +273,18 @@ async def recognize_weapons(image: UploadFile = File(...)):
             }
         )
 
+    _log.info(
+        "[%s] OCR: %d slots × %d crops, det engine (%.2fs)",
+        rid,
+        len(slot_matches),
+        len(_WEAPON_LEVEL_CROP_FRACS),
+        time.perf_counter() - t0,
+    )
+    _log.info(
+        "[%s] done in %.2fs → %d items, %d unknowns",
+        rid,
+        time.perf_counter() - t_start,
+        len(items),
+        len(unknowns),
+    )
     return {"items": items, "unknowns": unknowns}

@@ -19,11 +19,14 @@ Semantics of MatchResult.confidence: confidence = 1.0 - diff_ratio.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 def _imread_unicode(path: Path) -> np.ndarray | None:
@@ -33,13 +36,21 @@ def _imread_unicode(path: Path) -> np.ndarray | None:
     Unicode-aware I/O, then ``cv2.imdecode`` does the actual decode.
     Mirrors ``IMREAD_UNCHANGED`` so RGBA PNGs keep their alpha channel.
     """
+    img, _reason = _imread_unicode_with_reason(path)
+    return img
+
+
+def _imread_unicode_with_reason(path: Path) -> tuple[np.ndarray | None, str | None]:
     try:
         data = np.fromfile(str(path), dtype=np.uint8)
-    except OSError:
-        return None
+    except OSError as exc:
+        return None, str(exc)
     if data.size == 0:
-        return None
-    return cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+        return None, "file is empty"
+    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None, "cv2.imdecode returned None"
+    return img, None
 
 
 # ---------------------------------------------------------------------------
@@ -390,11 +401,24 @@ class TemplateLibrary:
         avatar_mask = _avatar_mask_for_asset_type(lib._asset_type)
         for name, rel in mapping.items():
             path = assets_dir.parent / rel
-            img = _imread_unicode(path)
+            img, reason = _imread_unicode_with_reason(path)
             if img is None:
+                _log.warning(
+                    "template load failed for %r at %s: %s",
+                    name,
+                    path,
+                    reason or "unknown reason",
+                )
                 continue
             lib._raw_templates[name] = img
             lib._templates[name] = _normalize_thumbnail(img, avatar_mask=avatar_mask)
+        if not lib._templates:
+            _log.warning(
+                "template library for %r loaded ZERO templates from %d mapping "
+                "entries — all recognition will fall through to unknowns",
+                lib._asset_type,
+                len(mapping),
+            )
         return lib
 
     def items(self):

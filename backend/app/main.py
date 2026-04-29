@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.log_util import configure_logging
 from app.routes import dev, inventory, operators, state, weapons
 
 app = FastAPI(title="ZMD 终末地识别后端", version="0.1.0")
+configure_logging()
 
 app.add_middleware(
     CORSMiddleware,
