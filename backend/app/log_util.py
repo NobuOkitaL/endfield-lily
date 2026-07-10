@@ -13,7 +13,6 @@ _UVICORN_LEVELS = {
     logging.ERROR,
     logging.CRITICAL,
 }
-_FALLBACK_HANDLER_MARKER = "_zmd_app_fallback_handler"
 
 
 def _effective_app_level(default: int) -> int:
@@ -50,7 +49,6 @@ def configure_logging(level: int = logging.INFO) -> None:
         return
 
     handler = logging.StreamHandler(sys.stderr)
-    setattr(handler, _FALLBACK_HANDLER_MARKER, True)
     handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
     root_app_logger.addHandler(handler)
 
