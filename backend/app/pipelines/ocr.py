@@ -10,6 +10,8 @@ the first actual OCR call.
 from __future__ import annotations
 
 import re
+from typing import Literal
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -17,25 +19,68 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 _engine_det = None  # type: ignore[assignment]
+_engine_det_fast = None  # type: ignore[assignment]
+_engine_det_legacy = None  # type: ignore[assignment]
 _engine_no_det = None  # type: ignore[assignment]
 # Back-compat alias for scripts/tests that reached into the original singleton.
 _engine = None  # type: ignore[assignment]
 
 
-def _get_engine(use_text_det: bool = True):
+DetectorProfile = Literal["accurate", "fast", "legacy"]
+
+
+def _get_engine(
+    use_text_det: bool = True,
+    detector_profile: DetectorProfile = "accurate",
+):
     """Return (and lazily init) an OCR engine singleton."""
-    global _engine, _engine_det, _engine_no_det
+    global _engine, _engine_det, _engine_det_fast, _engine_det_legacy, _engine_no_det
     if use_text_det:
+        if detector_profile == "fast":
+            if _engine_det_fast is None:
+                # Crop OCR does not need RapidOCR's default ``limit_type=min``
+                # detector resize, which upscales a tiny text strip until its
+                # short side reaches 736 px. A bounded detector is ~10-15x
+                # faster on these ROIs. Callers only trust it after cross-crop
+                # agreement and fall back to the accurate profile otherwise.
+                from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
+
+                _engine_det_fast = RapidOCR(
+                    use_angle_cls=False,
+                    text_score=0.1,
+                    det_model_path=None,
+                    det_box_thresh=0.1,
+                    det_unclip_ratio=3.0,
+                    det_limit_side_len=320,
+                    det_limit_type="max",
+                )
+            return _engine_det_fast
+
+        if detector_profile == "legacy":
+            if _engine_det_legacy is None:
+                from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
+
+                _engine_det_legacy = RapidOCR(
+                    text_score=0.1,
+                    det_model_path=None,
+                    det_box_thresh=0.1,
+                    det_unclip_ratio=3.0,
+                )
+            return _engine_det_legacy
+
         if _engine is not None and _engine is not _engine_det:
             _engine_det = _engine
         if _engine_det is None:
             # RapidOCR is the installed backend for this project
             from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
             _engine_det = RapidOCR(
+                use_angle_cls=False,
                 text_score=0.1,
                 det_model_path=None,
                 det_box_thresh=0.1,
                 det_unclip_ratio=3.0,
+                det_limit_side_len=320,
+                det_limit_type="min",
             )
         _engine = _engine_det
         return _engine_det
@@ -67,6 +112,14 @@ _STRICT_WAN_RE = re.compile(
     re.UNICODE,
 )
 _STRICT_NUM_RE = re.compile(r"^\s*([0-9][0-9,]*)\+?\s*$")
+# Narrow rescue for the OCR splits we actually observe: punctuation before a
+# number (".80", "*80") or an Lv/LV prefix. Do not search arbitrary text for
+# a digit run — e.g. "abc999xyz" is UI noise, not a trustworthy quantity.
+_PREFIXED_NUM_RE = re.compile(
+    r"^\s*(?:(?:lv)\.?\s*|[^0-9A-Za-z\s]{1,3}\s*)([0-9][0-9,]*)\+?\s*$",
+    re.IGNORECASE,
+)
+_DIGIT_RE = re.compile(r"\d")
 
 CONFIDENCE_THRESHOLD = 0.8
 # Lower floor at which a "clean" digit string is still trustable. RapidOCR
@@ -122,12 +175,12 @@ def parse_quantity_string(raw: str) -> int | None:
         digits = num_match.group(1).replace(",", "")
         return int(digits)
 
-    # Fallback: OCR sometimes returns leading punctuation / letters (e.g.
-    # ".80", "Lv.80", "*80") when the engine splits "Lv.80" into pieces.
-    # Pull out the first run of digits.
-    leading_digits = re.search(r"\d[\d,]*", raw)
-    if leading_digits:
-        return int(leading_digits.group(0).replace(",", ""))
+    # Fallback: OCR sometimes returns a known prefix or leading punctuation
+    # when it splits "Lv.80" into pieces. Keep this deliberately anchored so
+    # unrelated UI strings containing digits cannot become quantities.
+    prefixed = _PREFIXED_NUM_RE.match(raw)
+    if prefixed:
+        return int(prefixed.group(1).replace(",", ""))
 
     return None
 
@@ -139,7 +192,7 @@ def parse_ocr_result(raw: str, confidence: float) -> int | None:
     - PARSEABLE_CONFIDENCE_FLOOR <= confidence < 0.8: trust only if the string
       parses cleanly to a non-negative integer (rescues RapidOCR's lower scores
       on clean digits).
-    - confidence < PARSEABLE_CONFIDENCE_FLOOR (0.5): reject outright.
+    - confidence < PARSEABLE_CONFIDENCE_FLOOR (0.3): reject outright.
     """
     if confidence < PARSEABLE_CONFIDENCE_FLOOR:
         return None
@@ -158,7 +211,12 @@ def parse_ocr_result(raw: str, confidence: float) -> int | None:
 # OCR engine call
 # ---------------------------------------------------------------------------
 
-def ocr_digits(image: np.ndarray, *, use_text_det: bool = True) -> tuple[str, float]:
+def ocr_digits(
+    image: np.ndarray,
+    *,
+    use_text_det: bool = True,
+    detector_profile: DetectorProfile = "accurate",
+) -> tuple[str, float]:
     """Run OCR on *image* and return (text, confidence) of the best match.
 
     Uses rapidocr-onnxruntime as the backend (lazy init on first call).
@@ -172,37 +230,50 @@ def ocr_digits(image: np.ndarray, *, use_text_det: bool = True) -> tuple[str, fl
     params produce a stable ~0.5 confidence result. The safety net is still
     `parse_quantity_string` which rejects non-digit strings.
     """
-    engine = _get_engine(use_text_det=use_text_det)
+    engine = _get_engine(
+        use_text_det=use_text_det,
+        detector_profile=detector_profile,
+    )
     result, _elapse = engine(image)
 
     if not result:
         return "", 0.0
 
     # Loose detection thresholds give us multiple detections per slot. Prefer
-    # a detection that *contains* digits (e.g. "90" or "Lv.90") over one
-    # that's just a label ("LV."), then tie-break by confidence. This avoids
-    # both:
-    #   (a) returning only "LV." and dropping the number (levels OCR)
-    #   (b) concatenating spurious digit detections from elsewhere in the
-    #       crop, which produced nonsense like "3090" or "20202"
-    import re
-    _DIGIT = re.compile(r"\d")
+    # a digit-containing detection with the most complete numeric token, then
+    # tie-break by confidence. Confidence-only ranking can choose "Lv.8" over
+    # a separate ".80" detection for the same visible "Lv.80" label.
 
     best_text = ""
     best_conf = 0.0
     best_has_digit = False
+    best_digit_count = 0
     for _box, text, conf_str in result:
         try:
             conf = float(conf_str)
         except (ValueError, TypeError):
             conf = 0.0
-        has_digit = bool(_DIGIT.search(text))
-        # Prefer digit-containing texts; within a tier, higher conf wins.
+        digit_count = len(_DIGIT_RE.findall(text))
+        has_digit = digit_count > 0
+        # Prefer digit-containing texts; within that tier prefer completeness,
+        # then confidence. Route-level range checks and cross-crop voting remain
+        # the safety net against unrelated longer digit strings.
         better = (
             (has_digit and not best_has_digit)
-            or (has_digit == best_has_digit and conf > best_conf)
+            or (
+                has_digit == best_has_digit
+                and digit_count > best_digit_count
+            )
+            or (
+                has_digit == best_has_digit
+                and digit_count == best_digit_count
+                and conf > best_conf
+            )
         )
         if better:
-            best_text, best_conf, best_has_digit = text, conf, has_digit
+            best_text = text
+            best_conf = conf
+            best_has_digit = has_digit
+            best_digit_count = digit_count
 
     return best_text, best_conf

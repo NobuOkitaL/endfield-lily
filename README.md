@@ -107,11 +107,11 @@ Windows PowerShell（高级用户）：
 
 ### 截图识别（后端）
 
-- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认；三档 EXP 作战记录（初级 / 中级 / 高级）现在靠颜色区分而不会全部塌成同一个模板。**Hybrid OCR 路径**（无 detector 快通道 + det engine 兜底 + 早停）让单图端到端 ~10-15s（此前 38-42s，3-4× 提速）；详见 `docs/CHANGELOG.md` 的 2026-04-28（晚些时候）条目
-- **干员列表截图** → 自动识别干员与当前等级；等级文字（`Lv.XX`）用多裁剪 OCR（底部 0.30 / 0.40 / 0.50 / 0.60 各试一次，取解析出数字最多的那次），能识别单独的 "1" / "5" 这类 OCR 默认丢掉的孤立单数字
-- **武器列表截图** → 同一条干员 pipeline，`POST /recognize/weapons`
+- **库存截图** → 自动识别材料与数量，低置信度条目交给用户手动确认；三档 EXP 作战记录靠颜色区分。OCR 采用 no-det → fast detector → accurate detector → legacy detector 的保守级联，跨裁剪一致才提前采信，困难样本自动回退。
+- **干员列表截图** → 自动识别干员与当前等级；快速检测器先处理多裁剪 `Lv.XX`，结果不一致时回退高精度检测器，并强制等级范围 `1..90`
+- **武器列表截图** → `POST /recognize/weapons`；先尝试 no-det，再走同一分级回退，保留低置信度孤立 `Lv.1` 救援
 - **多图上传 + 去重**：三种识别入口都支持一次拖多张图，后端串行处理（UI 显示 `PROCESSING 2/5...`），前端 `logic/recognition-merge.ts` 按 id 去重（材料/干员/武器），数值字段取 `max`，bbox 和置信度跟随置信度更高的那次观察
-- **置信度分级**：OCR 置信度 ≥ 0.8 直接采信；0.3-0.8 之间仅在能 clean-parse 为合法数字时采信；否则 unknown
+- **置信度分级**：OCR 置信度 ≥ 0.8 直接采信；0.3-0.8 之间仅在能 clean-parse 为合法数字时采信；任意含数字的 UI 噪声不会再被宽松提取，等级必须落在 `1..90`
 - **图标匹配**：pixelmatch 风格的 RGBA 每像素 L1 差值（从 `arkntools/depot-recognition` 移植，MIT），100×100 BGRA 缩略图；模板与待测图走**对称的** `_normalize_thumbnail`（5×5 高斯模糊、右下数量区盖白方块、圆形 alpha mask），per-pixel 阈值 **0.05**（原 depot-recognition 默认 0.2 会把 3 档作战记录的色差当作 0 差），match 阈值 0.80
 - **格子定位**：Otsu+contour 找前景（卡内物品剪影）；对低对比度截图（如武陵仓库双面板）追加 **edge-lattice augmentation**——用 Canny 边沿做 x/y 投影找格线周期，拟合等距序列恢复完整网格，仅当 lattice 比 baseline 多至少 10 个 cell 才换用
 - **未知条目预填**：强模板匹配 + OCR 失败的格子落到 `items`（数量/等级=0，让用户手改）；弱匹配才落 `unknowns`，并附 `best_guess_*` 字段给前端下拉预选

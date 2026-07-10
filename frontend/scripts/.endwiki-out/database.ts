@@ -2,7 +2,6 @@
 // Auto-generated from end.wiki — do not edit by hand.
 // 486 rows total.
 
-import type { MaterialName } from './materials';
 import type { UpgradeProject } from './types';
 
 export interface UpgradeCostRow {

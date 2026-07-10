@@ -1,3 +1,5 @@
+import json
+
 import cv2
 import numpy as np
 
@@ -5,6 +7,9 @@ from app.pipelines.template_match import (
     TemplateLibrary,
     _diff_ratio,
     _normalize_thumbnail,
+    clear_template_library_cache,
+    is_confident_match,
+    load_template_library,
     match_slot,
 )
 
@@ -105,3 +110,36 @@ def test_empty_library_returns_unknown():
     slot = np.zeros((100, 100), dtype=np.uint8)
     result = match_slot(slot, lib, threshold=0.8)
     assert result.material_id is None
+
+
+def test_near_tied_templates_are_not_safe_for_auto_import():
+    template = _make_template()
+    lib = TemplateLibrary({"mat_a": template, "mat_b": template.copy()})
+
+    result = match_slot(template, lib, threshold=0.0)
+
+    assert result.confidence >= 0.99
+    assert result.diffs_too_close is True
+    assert is_confident_match(result) is False
+
+
+def test_template_library_cache_reuses_and_invalidates(tmp_path):
+    assets_root = tmp_path / "assets"
+    assets_dir = assets_root / "materials"
+    assets_dir.mkdir(parents=True)
+    template_path = assets_dir / "示例.png"
+    assert cv2.imwrite(str(template_path), _make_template())
+    mapping_path = assets_root / "materials.json"
+    mapping_path.write_text(
+        json.dumps({"示例": "materials/示例.png"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    clear_template_library_cache()
+    first = load_template_library(assets_dir, mapping_path)
+    second = load_template_library(assets_dir, mapping_path)
+    assert second is first
+
+    clear_template_library_cache()
+    third = load_template_library(assets_dir, mapping_path)
+    assert third is not first

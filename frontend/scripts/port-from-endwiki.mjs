@@ -999,7 +999,6 @@ async function cmdDatabase() {
     '// Auto-generated from end.wiki — do not edit by hand.',
     `// ${rows.length} rows total.`,
     '',
-    "import type { MaterialName } from './materials';",
     "import type { UpgradeProject } from './types';",
     '',
     'export interface UpgradeCostRow {',

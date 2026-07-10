@@ -40,6 +40,7 @@ describe('mergeInventoryResponses', () => {
       best_guess_material_id: null,
       best_guess_confidence: 0,
       raw_ocr_text: '',
+      best_guess_quantity: null,
     });
     const r1: InventoryResponse = { items: [], unknowns: [mkUnknown('u1')] };
     const r2: InventoryResponse = { items: [], unknowns: [mkUnknown('u2'), mkUnknown('u3')] };

@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { OperatorState } from '@/store/app-store';
 
 const DEFAULT_STATE: OperatorState = {
@@ -34,9 +34,31 @@ export function OperatorEditDialog({
   onSave: (state: OperatorState) => void;
   onRemove?: () => void;
 }) {
-  const [state, setState] = useState<OperatorState>(initial ?? DEFAULT_STATE);
-  useEffect(() => { setState(initial ?? DEFAULT_STATE); }, [initial, open]);
   if (!operatorName) return null;
+  return (
+    <OperatorEditDialogForm
+      key={`${operatorName}:${open}`}
+      operatorName={operatorName}
+      open={open}
+      onOpenChange={onOpenChange}
+      initial={initial}
+      onSave={onSave}
+      onRemove={onRemove}
+    />
+  );
+}
+
+function OperatorEditDialogForm({
+  operatorName, open, onOpenChange, initial, onSave, onRemove,
+}: {
+  operatorName: string;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initial?: OperatorState;
+  onSave: (state: OperatorState) => void;
+  onRemove?: () => void;
+}) {
+  const [state, setState] = useState<OperatorState>(initial ?? DEFAULT_STATE);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">

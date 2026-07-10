@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHARACTER_LIST, SKILL_MAPPING, EXCEPTIONS, OPERATOR_AVATARS } from './operators';
+import { CHARACTER_LIST, SKILL_MAPPING, OPERATOR_AVATARS } from './operators';
 import { mapSkillDisplayToGeneric, isProjectExcluded } from './operators-helpers';
 
 describe('operators data', () => {

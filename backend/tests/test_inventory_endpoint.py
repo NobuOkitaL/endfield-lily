@@ -99,6 +99,12 @@ def test_inventory_endpoint_returns_items_for_synthetic_screenshot(client, monke
         assert isinstance(item["quantity"], int)
         assert "confidence" in item and 0.0 <= item["confidence"] <= 1.0
         assert len(item["bbox"]) == 4
+    actual_quantities = {
+        item["material_id"]: item["quantity"]
+        for item in data["items"]
+        if item["material_id"] in quantities
+    }
+    assert actual_quantities == quantities
 
 
 def test_inventory_endpoint_rejects_non_image(client):

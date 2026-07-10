@@ -6,7 +6,6 @@ import {
   calculateWeaponLevelCost,
   calculateWeaponBreakCost,
   aggregateCosts,
-  emptyCost,
   addCost,
 } from './cost-calc';
 

@@ -5,7 +5,11 @@ The OCR engine uses lazy initialization, so just importing the module
 and calling parse_* functions must not download or load any model.
 """
 import pytest
+import numpy as np
+
+from app.pipelines import ocr as ocr_module
 from app.pipelines.ocr import (
+    ocr_digits,
     parse_ocr_result,
     parse_quantity_string,
     parse_quantity_string_strict,
@@ -46,6 +50,14 @@ class TestParseQuantityString:
 
     def test_zero(self):
         assert parse_quantity_string("0") == 0
+
+    def test_known_level_prefixes_are_rescued(self):
+        assert parse_quantity_string(".80") == 80
+        assert parse_quantity_string("Lv.80") == 80
+        assert parse_quantity_string("*80") == 80
+
+    def test_arbitrary_text_with_digits_is_not_rescued(self):
+        assert parse_quantity_string("abc999xyz") is None
 
     @pytest.mark.parametrize("raw,expected", [
         ("245", 245),
@@ -128,3 +140,21 @@ class TestParseOcrResult:
 
     def test_high_confidence_plus(self):
         assert parse_ocr_result("9999+", 0.85) == 9999
+
+
+def test_ocr_digits_prefers_complete_numeric_detection(monkeypatch):
+    class FakeEngine:
+        def __call__(self, _image):
+            return (
+                [
+                    [None, ".80", "0.737"],
+                    [None, "Lv.8", "0.757"],
+                ],
+                None,
+            )
+
+    monkeypatch.setattr(ocr_module, "_get_engine", lambda **_kwargs: FakeEngine())
+    raw_text, confidence = ocr_digits(np.zeros((20, 80, 3), dtype=np.uint8))
+
+    assert raw_text == ".80"
+    assert confidence == pytest.approx(0.737)

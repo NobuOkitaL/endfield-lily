@@ -56,7 +56,7 @@ def test_operators_endpoint_returns_operators_for_synthetic_screenshot(client, m
     for i, t in enumerate(portraits_src.values()):
         t[::(i + 2) * 4, :] = 0
 
-    levels = {"op_aaa": 30, "op_bbb": 45, "op_ccc": 60}
+    levels = {"op_aaa": 1, "op_bbb": 45, "op_ccc": 90}
 
     # 1×3 grid
     img, gt = build_operators_image(
@@ -95,6 +95,7 @@ def test_operators_endpoint_returns_operators_for_synthetic_screenshot(client, m
         assert isinstance(op["level"], int)
         assert "confidence" in op and 0.0 <= op["confidence"] <= 1.0
         assert len(op["bbox"]) == 4
+    assert {op["operator_id"]: op["level"] for op in data["items"]} == levels
 
 
 def test_operators_endpoint_rejects_non_image(client):

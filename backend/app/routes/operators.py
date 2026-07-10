@@ -4,8 +4,8 @@ from __future__ import annotations
 import base64
 import io
 import logging
-import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -15,9 +15,15 @@ from PIL import Image
 
 from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
-from app.pipelines.ocr import ocr_digits, parse_ocr_result
+from app.pipelines.level_ocr import ocr_level_cascade
 from app.pipelines.preprocess import load_and_normalize
-from app.pipelines.template_match import TemplateLibrary, match_slot
+from app.pipelines.template_match import (
+    TemplateLibrary,
+    is_confident_match,
+    load_template_library,
+    match_slot,
+)
+from app.recognition_runtime import recognition_slot
 
 _log = logging.getLogger(__name__)
 
@@ -26,16 +32,15 @@ router = APIRouter(prefix="/recognize", tags=["recognize"])
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _OPERATORS_JSON = _ASSETS_DIR / "operators.json"
 
-# Strip "Lv." or "Lv" prefix before parsing level number
-_LV_PREFIX_RE = re.compile(r"^\s*Lv\.?\s*", re.IGNORECASE)
 _OPERATOR_LEVEL_CROP_FRACS = (0.70, 0.60, 0.50, 0.40)
+_MIN_OCR_MATCH_CONFIDENCE = 0.10
 
 
 def _load_library() -> TemplateLibrary:
     """Load the operators template library from disk. Overridable in tests."""
     if not _OPERATORS_JSON.exists():
         return TemplateLibrary({})
-    return TemplateLibrary.from_directory(_ASSETS_DIR / "operators", _OPERATORS_JSON)
+    return load_template_library(_ASSETS_DIR / "operators", _OPERATORS_JSON)
 
 
 def _decode_upload(file_bytes: bytes) -> np.ndarray:
@@ -54,13 +59,8 @@ def _bbox_to_list(bbox: tuple[int, int, int, int]) -> list[int]:
     return list(bbox)
 
 
-def _strip_lv_prefix(raw: str) -> str:
-    """Remove leading 'Lv.' or 'Lv' prefix from OCR text before numeric parsing."""
-    return _LV_PREFIX_RE.sub("", raw)
-
-
 @router.post("/operators")
-async def recognize_operators(image: UploadFile = File(...)):
+def recognize_operators(image: UploadFile = File(...)):
     """
     Accept a screenshot of the operator select / roster page.
     Return recognised operators (portrait + level) + unknowns.
@@ -71,9 +71,14 @@ async def recognize_operators(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    raw = image.file.read()
+    with recognition_slot():
+        return _recognize_operators_bytes(raw)
+
+
+def _recognize_operators_bytes(raw: bytes) -> dict[str, list[dict]]:
     rid = make_request_id("op")
     t_start = time.perf_counter()
-    raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
     canvas_h, canvas_w = canvas.shape[:2]
@@ -105,60 +110,47 @@ async def recognize_operators(image: UploadFile = File(...)):
     t0 = time.perf_counter()
     library = _load_library()
     slot_matches = []
-    n_strong = 0
-    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         portrait_h = int(h * 0.7)
         portrait = canvas[y : y + portrait_h, x : x + w]
-        best = match_slot(portrait, library, threshold=0.0)
-        above_threshold = best.confidence >= 0.80
-        if above_threshold:
-            n_strong += 1
-        else:
-            n_weak += 1
-        slot_matches.append((bbox, best))
+        slot_matches.append((bbox, match_slot(portrait, library, threshold=0.0)))
+    n_strong = sum(
+        1
+        for _, match in slot_matches
+        if is_confident_match(match)
+    )
     _log.info(
         "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
         rid,
         len(library),
         n_strong,
-        n_weak,
+        len(slot_matches) - n_strong,
         time.perf_counter() - t0,
     )
 
     items: list[dict] = []
     unknowns: list[dict] = []
+    ocr_routes: Counter[str] = Counter()
 
     t0 = time.perf_counter()
     for bbox, best in slot_matches:
         x, y, w, h = bbox
-        # Effective slot height for OCR: extend down to P75 if this bbox is
-        # shorter, clamped to the canvas bottom.
-        eff_h = min(max(h, target_h), canvas_h - y)
-
-        # Multi-crop OCR on the level text, same pattern as inventory. The
-        # level sits in the bottom-right of the card; tight crops sometimes
-        # clip the leading "Lv." or the trailing digit. Pick the parse with
-        # the most digits / highest confidence.
-        candidates: list[tuple[int, float, str, int]] = []
-        first_rt, first_cf = "", 0.0
-        for crop_frac in _OPERATOR_LEVEL_CROP_FRACS:
-            region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
-            rt, cf = ocr_digits(region)
-            stripped = _strip_lv_prefix(rt)
-            if not first_rt:
-                first_rt, first_cf = rt, cf
-            lv = parse_ocr_result(stripped, cf)
-            if lv is not None and lv > 0:
-                candidates.append((len(str(lv)), cf, rt, lv))
-        if candidates:
-            candidates.sort(reverse=True)
-            _n, conf, raw_text, level = candidates[0]
+        if best.confidence < _MIN_OCR_MATCH_CONFIDENCE:
+            raw_text, level = "", None
+            ocr_routes["skipped_weak_match"] += 1
         else:
-            raw_text, conf, level = first_rt, first_cf, None
+            level_result = ocr_level_cascade(
+                canvas,
+                bbox,
+                target_h,
+                _OPERATOR_LEVEL_CROP_FRACS,
+            )
+            raw_text = level_result.raw_text
+            level = level_result.level
+            ocr_routes[level_result.route] += 1
 
-        above_threshold = best.confidence >= 0.80
+        above_threshold = is_confident_match(best)
 
         # Weak template match → unknowns (regardless of OCR outcome).
         # Strong match but OCR failed → items with level=0 for user to edit.
@@ -188,10 +180,14 @@ async def recognize_operators(image: UploadFile = File(...)):
         )
 
     _log.info(
-        "[%s] OCR: %d slots × %d crops, det engine (%.2fs)",
+        "[%s] OCR: %d fast-det, %d accurate fallback, %d legacy fallback, "
+        "%d skipped weak, %d unresolved (%.2fs)",
         rid,
-        len(slot_matches),
-        len(_OPERATOR_LEVEL_CROP_FRACS),
+        ocr_routes["fast_detector"],
+        ocr_routes["accurate_detector"],
+        ocr_routes["legacy_detector"],
+        ocr_routes["skipped_weak_match"],
+        ocr_routes["unknown"],
         time.perf_counter() - t0,
     )
     _log.info(

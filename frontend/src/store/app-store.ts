@@ -177,7 +177,8 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ ownedOperators: { ...s.ownedOperators, [name]: state } })),
       removeOwnedOperator: (name) =>
         set((s) => {
-          const { [name]: _drop, ...rest } = s.ownedOperators;
+          const rest = { ...s.ownedOperators };
+          delete rest[name];
           return { ownedOperators: rest };
         }),
 
@@ -186,7 +187,8 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ ownedWeapons: { ...s.ownedWeapons, [name]: state } })),
       removeOwnedWeapon: (name) =>
         set((s) => {
-          const { [name]: _drop, ...rest } = s.ownedWeapons;
+          const rest = { ...s.ownedWeapons };
+          delete rest[name];
           return { ownedWeapons: rest };
         }),
 
@@ -355,15 +357,21 @@ export const useAppStore = create<AppState>()(
       // no toggle). Any stray field on older persisted state is simply ignored.
       migrate: (persisted, version) => {
         if (version < 5) {
-          const p = (persisted ?? {}) as Partial<AppState> & {
+          const p = (persisted ?? {}) as Partial<PersistedSnapshot> & {
             settings?: Partial<Settings> & { syncToBackend?: boolean };
           };
           return {
-            ...p,
+            stock: p.stock ?? INITIAL.stock,
+            ownedOperators: p.ownedOperators ?? INITIAL.ownedOperators,
+            ownedWeapons: p.ownedWeapons ?? INITIAL.ownedWeapons,
+            operatorGoals: p.operatorGoals ?? INITIAL.operatorGoals,
+            weaponGoals: p.weaponGoals ?? INITIAL.weaponGoals,
+            planRows: p.planRows ?? INITIAL.planRows,
             settings: { darkMode: p.settings?.darkMode ?? false },
-          };
+            farmSelectedWeapons: p.farmSelectedWeapons ?? INITIAL.farmSelectedWeapons,
+          } satisfies PersistedSnapshot;
         }
-        return persisted as AppState;
+        return persisted as PersistedSnapshot;
       },
     },
   ),

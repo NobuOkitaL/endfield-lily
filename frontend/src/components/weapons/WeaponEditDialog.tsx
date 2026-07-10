@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { WeaponState } from '@/store/app-store';
 
 const DEFAULT: WeaponState = { 破限阶段: 0, 等级: 1 };
@@ -18,9 +18,31 @@ export function WeaponEditDialog({
   onSave: (state: WeaponState) => void;
   onRemove?: () => void;
 }) {
-  const [state, setState] = useState<WeaponState>(initial ?? DEFAULT);
-  useEffect(() => { setState(initial ?? DEFAULT); }, [initial, open]);
   if (!weaponName) return null;
+  return (
+    <WeaponEditDialogForm
+      key={`${weaponName}:${open}`}
+      weaponName={weaponName}
+      open={open}
+      onOpenChange={onOpenChange}
+      initial={initial}
+      onSave={onSave}
+      onRemove={onRemove}
+    />
+  );
+}
+
+function WeaponEditDialogForm({
+  weaponName, open, onOpenChange, initial, onSave, onRemove,
+}: {
+  weaponName: string;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initial?: WeaponState;
+  onSave: (state: WeaponState) => void;
+  onRemove?: () => void;
+}) {
+  const [state, setState] = useState<WeaponState>(initial ?? DEFAULT);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>

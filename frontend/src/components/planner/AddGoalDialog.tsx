@@ -1,5 +1,5 @@
 // frontend/src/components/planner/AddGoalDialog.tsx
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -30,13 +30,13 @@ export function AddGoalDialog({
   const [goalType, setGoalType] = useState<GoalType>('operator');
   const [selected, setSelected] = useState('');
 
-  // Reset on close
-  useEffect(() => {
-    if (!open) {
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
       setGoalType('operator');
       setSelected('');
     }
-  }, [open]);
+    onOpenChange(nextOpen);
+  }
 
   // Operators and weapons that already have an active goal
   const activeOperators = new Set(operatorGoals.map((g) => g.operator));
@@ -52,11 +52,11 @@ export function AddGoalDialog({
     } else {
       addWeaponGoal(selected);
     }
-    onOpenChange(false);
+    handleOpenChange(false);
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>新增规划</DialogTitle>

@@ -35,6 +35,7 @@ const TabsTrigger = React.forwardRef<
       "disabled:pointer-events-none disabled:opacity-50",
       "data-[state=active]:bg-canvas data-[state=active]:text-signal",
       "data-[state=inactive]:text-[#949494] hover:text-military",
+      className,
     ).toString()}
     style={{ letterSpacing: '1.5px' }}
     {...props}

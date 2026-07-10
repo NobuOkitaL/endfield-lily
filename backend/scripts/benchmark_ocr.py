@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import statistics
 import sys
 import time
 from dataclasses import dataclass, field
@@ -47,31 +48,30 @@ class Metrics:
     ocr_samples: list[dict[str, Any]] = field(default_factory=list)
 
 
-class FakeUploadFile:
-    content_type = "image/png"
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-
-    async def read(self) -> bytes:
-        return self._data
-
-
 def _configure_engine(mode: str) -> None:
+    ocr_mod._engine = None  # type: ignore[attr-defined]
+    ocr_mod._engine_det = None  # type: ignore[attr-defined]
+    ocr_mod._engine_det_fast = None  # type: ignore[attr-defined]
+    ocr_mod._engine_det_legacy = None  # type: ignore[attr-defined]
+    ocr_mod._engine_no_det = None  # type: ignore[attr-defined]
     if mode == "current":
-        ocr_mod._engine = None  # type: ignore[attr-defined]
         ocr_mod._get_engine()
         return
 
     from rapidocr_onnxruntime import RapidOCR
 
-    ocr_mod._engine = RapidOCR(  # type: ignore[attr-defined]
+    engine = RapidOCR(
         use_text_det=False,
         text_score=0.1,
         det_model_path=None,
         det_box_thresh=0.1,
         det_unclip_ratio=3.0,
     )
+    ocr_mod._engine = engine  # type: ignore[attr-defined]
+    ocr_mod._engine_det = engine  # type: ignore[attr-defined]
+    ocr_mod._engine_det_fast = engine  # type: ignore[attr-defined]
+    ocr_mod._engine_det_legacy = engine  # type: ignore[attr-defined]
+    ocr_mod._engine_no_det = engine  # type: ignore[attr-defined]
 
 
 def _time_call(metrics: Metrics, attr: str, func: Callable[..., Any]) -> Callable[..., Any]:
@@ -162,7 +162,7 @@ async def _run_one(path: Path) -> dict[str, Any]:
     originals = _install_timers(metrics)
     total_started = time.perf_counter()
     try:
-        result = await inventory_route.recognize_inventory(FakeUploadFile(path.read_bytes()))
+        result = inventory_route._recognize_inventory_bytes(path.read_bytes())
     finally:
         total_seconds = time.perf_counter() - total_started
         _restore_timers(originals)
@@ -197,16 +197,72 @@ async def _run_one(path: Path) -> dict[str, Any]:
     }
 
 
+def _evaluate_ground_truth(
+    result: dict[str, Any],
+    expected: dict[str, int],
+) -> dict[str, Any]:
+    actual = {
+        item["material_id"]: item["quantity"]
+        for item in result["items"]
+        if item.get("material_id") is not None
+    }
+    missing = sorted(name for name in expected if name not in actual)
+    wrong = {
+        name: {"expected": quantity, "actual": actual[name]}
+        for name, quantity in expected.items()
+        if name in actual and actual[name] != quantity
+    }
+    unexpected = sorted(name for name in actual if name not in expected)
+    correct = sum(actual.get(name) == quantity for name, quantity in expected.items())
+    return {
+        "expected_count": len(expected),
+        "correct_count": correct,
+        "accuracy": correct / len(expected) if expected else 1.0,
+        "exact_match": not missing and not wrong and not unexpected,
+        "missing": missing,
+        "wrong": wrong,
+        "unexpected": unexpected,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("current", "no-det"), required=True)
+    parser.add_argument(
+        "--ground-truth",
+        type=Path,
+        help=(
+            "Optional JSON object keyed by screenshot path or basename; each "
+            "value is a material_id-to-quantity object."
+        ),
+    )
     parser.add_argument("screenshots", nargs="+", type=Path)
     args = parser.parse_args()
 
     _configure_engine(args.mode)
+    results = [asyncio.run(_run_one(path)) for path in args.screenshots]
+    ground_truth: dict[str, dict[str, int]] = {}
+    if args.ground_truth is not None:
+        ground_truth = json.loads(args.ground_truth.read_text(encoding="utf-8"))
+        for result, path in zip(results, args.screenshots, strict=True):
+            expected = ground_truth.get(str(path), ground_truth.get(path.name))
+            if expected is not None:
+                result["ground_truth"] = _evaluate_ground_truth(result, expected)
+
+    totals = [float(result["total_seconds"]) for result in results]
     output = {
         "mode": args.mode,
-        "screenshots": [asyncio.run(_run_one(path)) for path in args.screenshots],
+        "summary": {
+            "count": len(results),
+            "total_seconds": sum(totals),
+            "median_seconds": statistics.median(totals),
+            "max_seconds": max(totals),
+            "exact_matches": sum(
+                bool(result.get("ground_truth", {}).get("exact_match"))
+                for result in results
+            ),
+        },
+        "screenshots": results,
     }
     print(json.dumps(output, ensure_ascii=False, indent=2))
 

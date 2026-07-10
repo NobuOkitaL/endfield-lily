@@ -8,7 +8,7 @@ const buttonVariants = cva(
   // Base: shared across all variants
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
-    "transition-all duration-[180ms] ease-out",
+    "transition-all [transition-duration:180ms] ease-out",
     "disabled:pointer-events-none disabled:opacity-50",
     "[&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
     // Focus: 2px outline Focus Cyan
@@ -104,4 +104,4 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 )
 Button.displayName = "Button"
 
-export { Button, buttonVariants }
+export { Button }

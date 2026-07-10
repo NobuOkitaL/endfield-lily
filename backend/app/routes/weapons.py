@@ -4,8 +4,8 @@ from __future__ import annotations
 import base64
 import io
 import logging
-import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -15,9 +15,15 @@ from PIL import Image
 
 from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
-from app.pipelines.ocr import ocr_digits, parse_ocr_result, parse_quantity_string
+from app.pipelines.level_ocr import ocr_level_cascade
 from app.pipelines.preprocess import load_and_normalize
-from app.pipelines.template_match import TemplateLibrary, match_slot
+from app.pipelines.template_match import (
+    TemplateLibrary,
+    is_confident_match,
+    load_template_library,
+    match_slot,
+)
+from app.recognition_runtime import recognition_slot
 
 _log = logging.getLogger(__name__)
 
@@ -26,18 +32,16 @@ router = APIRouter(prefix="/recognize", tags=["recognize"])
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _WEAPONS_JSON = _ASSETS_DIR / "weapons.json"
 
-_LV_PREFIX_RE = re.compile(r"^\s*Lv\.?\s*", re.IGNORECASE)
 _WEAPON_LEVEL_CROP_FRACS = (0.84, 0.70, 0.60, 0.50, 0.40, 0.35)
 _MIN_LOW_CONF_LV1 = 0.10
-_MIN_WEAPON_LEVEL = 1
-_MAX_WEAPON_LEVEL = 90
+_MIN_OCR_MATCH_CONFIDENCE = 0.10
 
 
 def _load_library() -> TemplateLibrary:
     """Load the weapons template library from disk. Overridable in tests."""
     if not _WEAPONS_JSON.exists():
         return TemplateLibrary({})
-    return TemplateLibrary.from_directory(_ASSETS_DIR / "weapons", _WEAPONS_JSON)
+    return load_template_library(_ASSETS_DIR / "weapons", _WEAPONS_JSON)
 
 
 def _decode_upload(file_bytes: bytes) -> np.ndarray:
@@ -52,10 +56,6 @@ def _decode_upload(file_bytes: bytes) -> np.ndarray:
 
 def _bbox_to_list(bbox: tuple[int, int, int, int]) -> list[int]:
     return list(bbox)
-
-
-def _strip_lv_prefix(raw: str) -> str:
-    return _LV_PREFIX_RE.sub("", raw)
 
 
 def _filter_weapon_grid_slots(
@@ -106,75 +106,8 @@ def _prepare_weapon_level_ocr_image(region: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(thresholded, cv2.COLOR_GRAY2BGR)
 
 
-def _parse_weapon_level(raw_text: str, confidence: float) -> int | None:
-    stripped = _strip_lv_prefix(raw_text).strip()
-    level = parse_ocr_result(stripped, confidence)
-    if level is None:
-        # RapidOCR can score isolated "1" very low even after preprocessing;
-        # keep that rescue local to weapon levels so inventory quantities do
-        # not inherit a looser global confidence floor.
-        parsed = parse_quantity_string(stripped)
-        if parsed == 1 and confidence >= _MIN_LOW_CONF_LV1:
-            level = 1
-
-    if level is None:
-        return None
-    if not (_MIN_WEAPON_LEVEL <= level <= _MAX_WEAPON_LEVEL):
-        return None
-    return level
-
-
-def _choose_weapon_level(
-    candidates: list[tuple[int, float, str]]
-) -> tuple[str, float, int | None]:
-    if not candidates:
-        return "", 0.0, None
-
-    grouped: dict[int, list[tuple[float, str]]] = {}
-    for level, confidence, raw_text in candidates:
-        grouped.setdefault(level, []).append((confidence, raw_text))
-
-    level = max(
-        grouped,
-        key=lambda lv: (
-            len(grouped[lv]),
-            len(str(lv)),
-            max(conf for conf, _raw in grouped[lv]),
-        ),
-    )
-    confidence, raw_text = max(grouped[level], key=lambda item: item[0])
-    return raw_text, confidence, level
-
-
-def _ocr_weapon_level(
-    canvas: np.ndarray, bbox: tuple[int, int, int, int], target_h: int
-) -> tuple[str, float, int | None]:
-    x, y, w, h = bbox
-    canvas_h = canvas.shape[0]
-    eff_h = min(max(h, target_h), canvas_h - y)
-    candidates: list[tuple[int, float, str]] = []
-    first_rt, first_cf = "", 0.0
-
-    for crop_frac in _WEAPON_LEVEL_CROP_FRACS:
-        region = canvas[y + int(eff_h * crop_frac) : y + eff_h, x : x + w]
-        if region.size == 0:
-            continue
-        prepared = _prepare_weapon_level_ocr_image(region)
-        rt, cf = ocr_digits(prepared)
-        if not first_rt:
-            first_rt, first_cf = rt, cf
-        level = _parse_weapon_level(rt, cf)
-        if level is not None:
-            candidates.append((level, cf, rt))
-
-    raw_text, confidence, level = _choose_weapon_level(candidates)
-    if level is None:
-        return first_rt, first_cf, None
-    return raw_text, confidence, level
-
-
 @router.post("/weapons")
-async def recognize_weapons(image: UploadFile = File(...)):
+def recognize_weapons(image: UploadFile = File(...)):
     """
     Accept a screenshot of the weapon roster page.
     Return recognised weapons (icon + level) + unknowns.
@@ -185,9 +118,14 @@ async def recognize_weapons(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    raw = image.file.read()
+    with recognition_slot():
+        return _recognize_weapons_bytes(raw)
+
+
+def _recognize_weapons_bytes(raw: bytes) -> dict[str, list[dict]]:
     rid = make_request_id("wpn")
     t_start = time.perf_counter()
-    raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
     canvas_h, canvas_w = canvas.shape[:2]
@@ -216,37 +154,50 @@ async def recognize_weapons(image: UploadFile = File(...)):
     t0 = time.perf_counter()
     library = _load_library()
     slot_matches = []
-    n_strong = 0
-    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
-        best = match_slot(icon, library, threshold=0.0)
-        above_threshold = best.confidence >= 0.80
-        if above_threshold:
-            n_strong += 1
-        else:
-            n_weak += 1
-        slot_matches.append((bbox, best))
+        slot_matches.append((bbox, match_slot(icon, library, threshold=0.0)))
+    n_strong = sum(
+        1
+        for _, match in slot_matches
+        if is_confident_match(match)
+    )
     _log.info(
         "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
         rid,
         len(library),
         n_strong,
-        n_weak,
+        len(slot_matches) - n_strong,
         time.perf_counter() - t0,
     )
 
     items: list[dict] = []
     unknowns: list[dict] = []
+    ocr_routes: Counter[str] = Counter()
 
     t0 = time.perf_counter()
     for bbox, best in slot_matches:
         x, y, w, h = bbox
-        above_threshold = best.confidence >= 0.80
+        above_threshold = is_confident_match(best)
 
-        raw_text, conf, level = _ocr_weapon_level(canvas, bbox, target_h)
+        if best.confidence < _MIN_OCR_MATCH_CONFIDENCE:
+            raw_text, level = "", None
+            ocr_routes["skipped_weak_match"] += 1
+        else:
+            level_result = ocr_level_cascade(
+                canvas,
+                bbox,
+                target_h,
+                _WEAPON_LEVEL_CROP_FRACS,
+                prepare=_prepare_weapon_level_ocr_image,
+                try_no_det=True,
+                low_confidence_level_one=_MIN_LOW_CONF_LV1,
+            )
+            raw_text = level_result.raw_text
+            level = level_result.level
+            ocr_routes[level_result.route] += 1
 
         if not above_threshold:
             _, buf = cv2.imencode(".png", canvas[y : y + h, x : x + w])
@@ -274,10 +225,15 @@ async def recognize_weapons(image: UploadFile = File(...)):
         )
 
     _log.info(
-        "[%s] OCR: %d slots × %d crops, det engine (%.2fs)",
+        "[%s] OCR: %d no-det, %d fast-det, %d accurate fallback, "
+        "%d legacy fallback, %d skipped weak, %d unresolved (%.2fs)",
         rid,
-        len(slot_matches),
-        len(_WEAPON_LEVEL_CROP_FRACS),
+        ocr_routes["no_det"],
+        ocr_routes["fast_detector"],
+        ocr_routes["accurate_detector"],
+        ocr_routes["legacy_detector"],
+        ocr_routes["skipped_weak_match"],
+        ocr_routes["unknown"],
         time.perf_counter() - t0,
     )
     _log.info(

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app.pipelines.grid_detect import detect_slots
 from app.pipelines.preprocess import CANVAS_H, CANVAS_W
+from app.pipelines.template_match import clear_template_library_cache
 
 router = APIRouter(prefix="/dev", tags=["dev"])
 
@@ -173,6 +174,7 @@ async def delete_template(asset_type: str, name: str):
         png_path.unlink()
     labeled.discard(name)
     _save_labeled(asset_type, labeled)
+    clear_template_library_cache()
     return {"deleted": name}
 
 
@@ -313,5 +315,6 @@ async def save_templates(asset_type: str, req: SaveTemplatesRequest):
         )
         if newly_labeled:
             _save_labeled(asset_type, labeled | newly_labeled)
+        clear_template_library_cache()
 
     return {"saved": saved, "skipped": skipped, "overwritten": overwritten}

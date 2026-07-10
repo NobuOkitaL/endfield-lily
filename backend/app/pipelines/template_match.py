@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
@@ -29,18 +30,15 @@ import numpy as np
 _log = logging.getLogger(__name__)
 
 
-def _imread_unicode(path: Path) -> np.ndarray | None:
+def _imread_unicode(path: Path) -> tuple[np.ndarray | None, str | None]:
     """Unicode-safe replacement for ``cv2.imread``. OpenCV's imread on Windows
     routes through ANSI string APIs and silently fails on non-ASCII paths
     (e.g. ``燎石.png``). Reading bytes via ``np.fromfile`` uses Python's
     Unicode-aware I/O, then ``cv2.imdecode`` does the actual decode.
     Mirrors ``IMREAD_UNCHANGED`` so RGBA PNGs keep their alpha channel.
+    Returns ``(image, None)`` on success or ``(None, reason)`` on failure
+    so callers can surface a useful WARNING.
     """
-    img, _reason = _imread_unicode_with_reason(path)
-    return img
-
-
-def _imread_unicode_with_reason(path: Path) -> tuple[np.ndarray | None, str | None]:
     try:
         data = np.fromfile(str(path), dtype=np.uint8)
     except OSError as exc:
@@ -192,13 +190,30 @@ def _diff_ratio(
     per_pixel_threshold * 255 * 3.  Returns 1.0 (max possible diff) when
     there is no overlapping opaque region.
     """
-    mask = (a_bgra[..., 3] > 0) & (b_bgra[..., 3] > 0)
+    return _diff_ratio_prepared(
+        a_bgra[..., :3].astype(np.int16),
+        a_bgra[..., 3] > 0,
+        b_bgra[..., :3].astype(np.int16),
+        b_bgra[..., 3] > 0,
+        per_pixel_threshold,
+    )
+
+
+def _diff_ratio_prepared(
+    a_rgb: np.ndarray,
+    a_mask: np.ndarray,
+    b_rgb: np.ndarray,
+    b_mask: np.ndarray,
+    per_pixel_threshold: float = _PIXEL_DIFF_THRESHOLD,
+) -> float:
+    """Prepared variant that avoids repeated dtype conversion per template."""
+    mask = a_mask & b_mask
     total = int(mask.sum())
     if total == 0:
         return 1.0
-    diff = np.abs(
-        a_bgra[..., :3].astype(np.int32) - b_bgra[..., :3].astype(np.int32)
-    ).sum(axis=-1)
+    # int16 safely holds channel deltas and their 0..765 L1 sum.
+    delta = np.abs(a_rgb - b_rgb)
+    diff = delta[..., 0] + delta[..., 1] + delta[..., 2]
     thresh = per_pixel_threshold * 255 * 3
     bad = int(((diff > thresh) & mask).sum())
     return float(bad) / float(total)
@@ -234,14 +249,8 @@ def _foreground_hs_hist(img_bgr: np.ndarray) -> np.ndarray:
     return hist
 
 
-def _foreground_color_similarity(a_bgr: np.ndarray, b_bgr: np.ndarray) -> float:
-    return float(
-        cv2.compareHist(
-            _foreground_hs_hist(a_bgr),
-            _foreground_hs_hist(b_bgr),
-            cv2.HISTCMP_CORREL,
-        )
-    )
+def _hist_similarity(a_hist: np.ndarray, b_hist: np.ndarray) -> float:
+    return float(cv2.compareHist(a_hist, b_hist, cv2.HISTCMP_CORREL))
 
 
 def _prepare_slot_for_edge_overlay(slot_bgr: np.ndarray) -> np.ndarray:
@@ -273,33 +282,40 @@ def _prepare_slot_for_edge_overlay(slot_bgr: np.ndarray) -> np.ndarray:
     return out
 
 
-def _edge_overlay_score(slot_bgr: np.ndarray, template_bgr: np.ndarray) -> float:
-    slot_h, slot_w = slot_bgr.shape[:2]
-    tpl_h, tpl_w = template_bgr.shape[:2]
-    if (
-        slot_h == 0
-        or tpl_h == 0
-        or slot_w / slot_h < _EDGE_FALLBACK_MIN_ASPECT
-        or tpl_w / tpl_h < _EDGE_FALLBACK_MIN_ASPECT
-        or not _slot_has_light_card_background(slot_bgr)
-    ):
-        return 0.0
-
-    prepared_slot = _prepare_slot_for_edge_overlay(slot_bgr)
-    if (
-        _foreground_color_similarity(prepared_slot, template_bgr)
-        < _EDGE_FALLBACK_MIN_COLOR_SIMILARITY
-    ):
-        return 0.0
-
-    query_edges = cv2.Canny(cv2.cvtColor(prepared_slot, cv2.COLOR_BGR2GRAY), 50, 150)
+def _prepare_edge_template(
+    template: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    template_bgr = _as_bgr(template)
     template_edges = cv2.Canny(
         cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY),
         50,
         150,
     )
-    template_mask = _edge_overlay_mask(template_bgr)
-    if int(template_mask.sum()) == 0:
+    return (
+        template_bgr,
+        template_edges,
+        _edge_overlay_mask(template_bgr),
+        _foreground_hs_hist(template_bgr),
+    )
+
+
+def _prepared_edge_overlay_score(
+    query_edges: np.ndarray,
+    slot_hist: np.ndarray,
+    template_bgr: np.ndarray,
+    template_edges: np.ndarray,
+    template_mask: np.ndarray,
+    template_hist: np.ndarray,
+) -> float:
+    slot_h, slot_w = query_edges.shape[:2]
+    tpl_h, tpl_w = template_bgr.shape[:2]
+    if (
+        tpl_h == 0
+        or tpl_w / tpl_h < _EDGE_FALLBACK_MIN_ASPECT
+        or _hist_similarity(slot_hist, template_hist)
+        < _EDGE_FALLBACK_MIN_COLOR_SIMILARITY
+        or int(template_mask.sum()) == 0
+    ):
         return 0.0
 
     best = 0.0
@@ -329,12 +345,30 @@ def _best_edge_overlay_match(
     slot: np.ndarray, library: TemplateLibrary
 ) -> tuple[str | None, float]:
     slot_bgr = _as_bgr(slot)
+    slot_h, slot_w = slot_bgr.shape[:2]
+    if (
+        slot_h == 0
+        or slot_w / slot_h < _EDGE_FALLBACK_MIN_ASPECT
+        or not _slot_has_light_card_background(slot_bgr)
+    ):
+        return None, 0.0
+    prepared_slot = _prepare_slot_for_edge_overlay(slot_bgr)
+    query_edges = cv2.Canny(
+        cv2.cvtColor(prepared_slot, cv2.COLOR_BGR2GRAY),
+        50,
+        150,
+    )
+    slot_hist = _foreground_hs_hist(prepared_slot)
     best_id: str | None = None
     best_score = 0.0
     second_score = 0.0
 
-    for name, raw_template in library.raw_items():
-        score = _edge_overlay_score(slot_bgr, _as_bgr(raw_template))
+    for name, edge_template in library.edge_items():
+        score = _prepared_edge_overlay_score(
+            query_edges,
+            slot_hist,
+            *edge_template,
+        )
         if score > best_score:
             second_score = best_score
             best_score = score
@@ -362,6 +396,11 @@ class MatchResult:
     diffs_too_close: bool = field(default=False)
 
 
+def is_confident_match(result: MatchResult, threshold: float = 0.80) -> bool:
+    """Only auto-import an absolute strong match that is not a near tie."""
+    return result.confidence >= threshold and not result.diffs_too_close
+
+
 class TemplateLibrary:
     """A store of id → pre-normalized 100x100 BGRA template thumbnail."""
 
@@ -374,12 +413,23 @@ class TemplateLibrary:
         # Pre-normalize everything at construction time so match_slot is
         # pure pixel math.
         self._templates: dict[str, np.ndarray] = {}
+        self._prepared_templates: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self._raw_templates: dict[str, np.ndarray] = {}
+        self._edge_templates: dict[
+            str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        ] = {}
         self._asset_type = asset_type
         avatar_mask = _avatar_mask_for_asset_type(self._asset_type)
         for name, arr in (templates or {}).items():
-            self._raw_templates[name] = arr
-            self._templates[name] = _normalize_thumbnail(arr, avatar_mask=avatar_mask)
+            if self._asset_type == "weapons":
+                self._raw_templates[name] = arr
+                self._edge_templates[name] = _prepare_edge_template(arr)
+            normalized = _normalize_thumbnail(arr, avatar_mask=avatar_mask)
+            self._templates[name] = normalized
+            self._prepared_templates[name] = (
+                normalized[..., :3].astype(np.int16),
+                normalized[..., 3] > 0,
+            )
 
     @classmethod
     def from_directory(
@@ -396,12 +446,14 @@ class TemplateLibrary:
         mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
         lib = cls.__new__(cls)
         lib._templates = {}
+        lib._prepared_templates = {}
         lib._raw_templates = {}
+        lib._edge_templates = {}
         lib._asset_type = assets_dir.name
         avatar_mask = _avatar_mask_for_asset_type(lib._asset_type)
         for name, rel in mapping.items():
             path = assets_dir.parent / rel
-            img, reason = _imread_unicode_with_reason(path)
+            img, reason = _imread_unicode(path)
             if img is None:
                 _log.warning(
                     "template load failed for %r at %s: %s",
@@ -410,8 +462,15 @@ class TemplateLibrary:
                     reason or "unknown reason",
                 )
                 continue
-            lib._raw_templates[name] = img
-            lib._templates[name] = _normalize_thumbnail(img, avatar_mask=avatar_mask)
+            if lib._asset_type == "weapons":
+                lib._raw_templates[name] = img
+                lib._edge_templates[name] = _prepare_edge_template(img)
+            normalized = _normalize_thumbnail(img, avatar_mask=avatar_mask)
+            lib._templates[name] = normalized
+            lib._prepared_templates[name] = (
+                normalized[..., :3].astype(np.int16),
+                normalized[..., 3] > 0,
+            )
         if not lib._templates:
             _log.warning(
                 "template library for %r loaded ZERO templates from %d mapping "
@@ -426,6 +485,12 @@ class TemplateLibrary:
 
     def raw_items(self):
         return self._raw_templates.items()
+
+    def prepared_items(self):
+        return self._prepared_templates.items()
+
+    def edge_items(self):
+        return self._edge_templates.items()
 
     def asset_type(self) -> str | None:
         return self._asset_type
@@ -465,8 +530,15 @@ def match_slot(
     best_id: str | None = None
     best_diff: float = float("inf")
     second_best_diff: float = float("inf")
-    for name, tpl in library.items():
-        d = _diff_ratio(query, tpl)
+    query_rgb = query[..., :3].astype(np.int16)
+    query_mask = query[..., 3] > 0
+    for name, (template_rgb, template_mask) in library.prepared_items():
+        d = _diff_ratio_prepared(
+            query_rgb,
+            query_mask,
+            template_rgb,
+            template_mask,
+        )
         if d < best_diff:
             second_best_diff = best_diff
             best_diff = d
@@ -505,3 +577,17 @@ def match_slot(
         confidence=confidence,
         diffs_too_close=diffs_too_close,
     )
+
+
+@lru_cache(maxsize=3)
+def load_template_library(
+    assets_dir: Path,
+    mapping_file: Path,
+) -> TemplateLibrary:
+    """Load and cache one immutable library per asset type."""
+    return TemplateLibrary.from_directory(assets_dir, mapping_file)
+
+
+def clear_template_library_cache() -> None:
+    """Invalidate libraries after label-tool writes or deletes a template."""
+    load_template_library.cache_clear()

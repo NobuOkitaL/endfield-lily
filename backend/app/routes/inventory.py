@@ -5,6 +5,7 @@ import base64
 import io
 import logging
 import time
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -15,13 +16,20 @@ from PIL import Image
 from app.log_util import make_request_id
 from app.pipelines.grid_detect import detect_slots, p75_height
 from app.pipelines.ocr import (
+    DetectorProfile,
     PARSEABLE_CONFIDENCE_FLOOR,
     ocr_digits,
     parse_ocr_result,
     parse_quantity_string_strict,
 )
 from app.pipelines.preprocess import load_and_normalize
-from app.pipelines.template_match import TemplateLibrary, match_slot
+from app.pipelines.template_match import (
+    TemplateLibrary,
+    is_confident_match,
+    load_template_library,
+    match_slot,
+)
+from app.recognition_runtime import recognition_slot
 
 _log = logging.getLogger(__name__)
 
@@ -36,7 +44,7 @@ def _load_library() -> TemplateLibrary:
     """Load the materials template library from disk. Overridable in tests."""
     if not _MATERIALS_JSON.exists():
         return TemplateLibrary({})
-    return TemplateLibrary.from_directory(_ASSETS_DIR / "materials", _MATERIALS_JSON)
+    return load_template_library(_ASSETS_DIR / "materials", _MATERIALS_JSON)
 
 
 def _decode_upload(file_bytes: bytes) -> np.ndarray:
@@ -67,6 +75,9 @@ _TOP_BAR_CURRENCY_OCR_REGIONS = (
     (1320, 8, 340, 66),
 )
 _NO_DET_STRONG_CONFIDENCE = 0.50
+_MIN_OCR_MATCH_CONFIDENCE = 0.10
+
+QuantityCandidate = tuple[int, float, str, float]
 
 
 def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
@@ -82,29 +93,85 @@ def _prepare_qty_ocr_image(region: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(thresholded, cv2.COLOR_GRAY2BGR)
 
 
+def _rank_quantity_candidates(
+    candidates: list[QuantityCandidate],
+) -> list[tuple[int, dict[str, object]]]:
+    grouped: dict[int, dict[str, object]] = {}
+    for value, confidence, raw_text, source in candidates:
+        data = grouped.setdefault(
+            value,
+            {"sources": set(), "max_conf": 0.0, "best_raw": ""},
+        )
+        sources = data["sources"]
+        assert isinstance(sources, set)
+        sources.add(source)
+        if confidence > data["max_conf"]:
+            data["max_conf"] = confidence
+            data["best_raw"] = raw_text
+    return sorted(
+        grouped.items(),
+        key=lambda item: (
+            -len(item[1]["sources"]),
+            -len(str(item[0])),
+            -float(item[1]["max_conf"]),
+        ),
+    )
+
+
+def _quantity_consensus(
+    candidates: list[QuantityCandidate],
+    *,
+    min_sources: int,
+    min_confidence: float,
+) -> tuple[str, float, int] | None:
+    ranked = _rank_quantity_candidates(candidates)
+    if not ranked:
+        return None
+    value, data = ranked[0]
+    source_count = len(data["sources"])
+    second_count = len(ranked[1][1]["sources"]) if len(ranked) > 1 else 0
+    confidence = float(data["max_conf"])
+    if (
+        value != 0
+        and source_count >= min_sources
+        and source_count > second_count
+        and confidence >= min_confidence
+    ):
+        return str(data["best_raw"]), confidence, value
+    return None
+
+
 def _ocr_inventory_quantity(
-    canvas: np.ndarray,
-    x: int,
-    y: int,
-    w: int,
-    eff_h: int,
-    counters: dict[str, int] | None = None,
-    route_out: list[str] | None = None,
-) -> tuple[str, float, int | None]:
+    canvas: np.ndarray, x: int, y: int, w: int, eff_h: int,
+) -> tuple[str, float, int | None, str]:
     """Run no-det OCR first, then fall back to detector OCR voting.
 
     The no-det path is fast but only trusted when clean, strict parses agree
     across distinct crop ratios. The detector fallback preserves the previous
     loose parse/vote behavior, including leading-junk rescue.
-    """
-    strict_candidates: list[tuple[int, float, str, float]] = []
-    first_rt, first_cf = "", 0.0
 
-    for frac in _QTY_CROP_FRACS:
-        region = canvas[y + int(eff_h * frac) : y + eff_h, x : x + w]
+    Returns ``(raw_text, confidence, value, route)`` with the accepted OCR
+    profile so callers can tally routing stats.
+    """
+    strict_candidates: list[QuantityCandidate] = []
+    first_rt, first_cf = "", 0.0
+    crop_variants: list[tuple[float, tuple[np.ndarray, np.ndarray]]] = []
+    # Quantity text is centered in the card's bottom strip. Excluding the icon
+    # edges reduces detector pixels and removes silhouette strokes that can be
+    # mistaken for a leading digit.
+    qty_x1 = x + int(w * 0.15)
+    qty_x2 = x + max(int(w * 0.85), int(w * 0.15) + 1)
+
+    for index, frac in enumerate(_QTY_CROP_FRACS):
+        region = canvas[
+            y + int(eff_h * frac) : y + eff_h,
+            qty_x1:qty_x2,
+        ]
         if region.size == 0:
             continue
-        for variant in (region, _prepare_qty_ocr_image(region)):
+        variants = (region, _prepare_qty_ocr_image(region))
+        crop_variants.append((frac, variants))
+        for variant in variants:
             rt, cf = ocr_digits(variant, use_text_det=False)
             if not first_rt:
                 first_rt, first_cf = rt, cf
@@ -112,55 +179,47 @@ def _ocr_inventory_quantity(
                 strict_value = parse_quantity_string_strict(rt)
                 if strict_value is not None:
                     strict_candidates.append((strict_value, cf, rt, frac))
-
-    by_value: dict[int, dict] = {}
-    for value, confidence, raw_text, frac in strict_candidates:
-        slot = by_value.setdefault(
-            value,
-            {"fracs": set(), "max_conf": 0.0, "best_rt": ""},
-        )
-        slot["fracs"].add(frac)
-        if confidence > slot["max_conf"]:
-            slot["max_conf"], slot["best_rt"] = confidence, raw_text
-
-    if by_value:
-        ranked = sorted(
-            by_value.items(),
-            key=lambda kv: (-len(kv[1]["fracs"]), -kv[1]["max_conf"]),
-        )
-        top_value, top_data = ranked[0]
-        top_frac_count = len(top_data["fracs"])
-        second_frac_count = len(ranked[1][1]["fracs"]) if len(ranked) > 1 else 0
-        strong = (
-            top_value != 0
-            and top_frac_count > second_frac_count
-            and (
-                top_frac_count >= 3
-                or (
-                    top_frac_count >= 2
-                    and top_data["max_conf"] >= _NO_DET_STRONG_CONFIDENCE
-                    and any(frac >= 0.60 for frac in top_data["fracs"])
-                )
+        if index >= 1:
+            accepted = _quantity_consensus(
+                strict_candidates,
+                min_sources=2,
+                min_confidence=_NO_DET_STRONG_CONFIDENCE,
             )
-        )
-        if strong:
-            if counters is not None:
-                counters["fastpath"] += 1
-            if route_out is not None:
-                route_out.append("fastpath")
-            return top_data["best_rt"], top_data["max_conf"], top_value
+            if accepted is not None:
+                raw_text, confidence, value = accepted
+                return raw_text, confidence, value, "fastpath"
 
-    if counters is not None:
-        counters["fallback"] += 1
+    # A bounded detector handles most multi-digit crops at a fraction of the
+    # cost of RapidOCR's default detector. Only cross-crop agreement is trusted.
+    fast_candidates: list[QuantityCandidate] = []
+    for index, (frac, variants) in enumerate(crop_variants):
+        for variant in variants:
+            rt, cf = ocr_digits(
+                variant,
+                use_text_det=True,
+                detector_profile="fast",
+            )
+            if not first_rt:
+                first_rt, first_cf = rt, cf
+            if cf >= PARSEABLE_CONFIDENCE_FLOOR:
+                value = parse_quantity_string_strict(rt)
+                if value is not None:
+                    fast_candidates.append((value, cf, rt, frac))
+        if index >= 1:
+            accepted = _quantity_consensus(
+                fast_candidates,
+                min_sources=2,
+                min_confidence=0.60,
+            )
+            if accepted is not None:
+                raw_text, confidence, value = accepted
+                return raw_text, confidence, value, "fast_detector"
 
-    strict_candidates: list[tuple[int, float, str, float]] = []
-    candidates: list[tuple[int, float, str]] = []
+    strict_candidates = []
+    candidates: list[QuantityCandidate] = []
     det_first_rt, det_first_cf = "", 0.0
-    for index, frac in enumerate(_QTY_CROP_FRACS):
-        region = canvas[y + int(eff_h * frac) : y + eff_h, x : x + w]
-        if region.size == 0:
-            continue
-        for variant in (region, _prepare_qty_ocr_image(region)):
+    for index, (frac, variants) in enumerate(crop_variants):
+        for variant in variants:
             rt, cf = ocr_digits(variant, use_text_det=True)
             if not det_first_rt:
                 det_first_rt, det_first_cf = rt, cf
@@ -170,26 +229,14 @@ def _ocr_inventory_quantity(
                     strict_candidates.append((strict_value, cf, rt, frac))
             q = parse_ocr_result(rt, cf)
             if q is not None:
-                candidates.append((q, cf, rt))
+                candidates.append((q, cf, rt, frac))
 
         if index >= 1 and strict_candidates:
-            by_value = {}
-            for value, confidence, raw_text, candidate_frac in strict_candidates:
-                slot = by_value.setdefault(
-                    value,
-                    {"fracs": set(), "max_conf": 0.0, "best_rt": ""},
-                )
-                slot["fracs"].add(candidate_frac)
-                if confidence > slot["max_conf"]:
-                    slot["max_conf"], slot["best_rt"] = confidence, raw_text
-            ranked = sorted(
-                by_value.items(),
-                key=lambda kv: (-len(kv[1]["fracs"]), -kv[1]["max_conf"]),
-            )
+            ranked = _rank_quantity_candidates(strict_candidates)
             top_value, top_data = ranked[0]
-            top_frac_count = len(top_data["fracs"])
+            top_frac_count = len(top_data["sources"])
             second_frac_count = (
-                len(ranked[1][1]["fracs"]) if len(ranked) > 1 else 0
+                len(ranked[1][1]["sources"]) if len(ranked) > 1 else 0
             )
             if index == 1:
                 if (
@@ -197,43 +244,68 @@ def _ocr_inventory_quantity(
                     and top_data["max_conf"] >= 0.60
                     and top_frac_count > second_frac_count
                 ):
-                    if counters is not None:
-                        counters["early_exit"] += 1
-                    if route_out is not None:
-                        route_out.append("fallback")
-                    return top_data["best_rt"], top_data["max_conf"], top_value
+                    return (
+                        str(top_data["best_raw"]),
+                        float(top_data["max_conf"]),
+                        top_value,
+                        "fallback_early",
+                    )
             elif index >= 3:
                 if (
                     top_frac_count >= 3
                     or (top_frac_count - second_frac_count) >= 2
                 ):
-                    if counters is not None and index < len(_QTY_CROP_FRACS) - 1:
-                        counters["early_exit"] += 1
-                    if route_out is not None:
-                        route_out.append("fallback")
-                    return top_data["best_rt"], top_data["max_conf"], top_value
+                    # Early-stop on the last frac means we already ran every
+                    # crop, so it's not actually "early" — count it as complete.
+                    route = (
+                        "fallback_early"
+                        if index < len(_QTY_CROP_FRACS) - 1
+                        else "fallback_complete"
+                    )
+                    return (
+                        str(top_data["best_raw"]),
+                        float(top_data["max_conf"]),
+                        top_value,
+                        route,
+                    )
 
+    final_route = "fallback_complete"
     if not candidates:
-        if route_out is not None:
-            route_out.append("unknown")
-        return det_first_rt or first_rt, det_first_cf or first_cf, None
+        legacy_candidates: list[QuantityCandidate] = []
+        for index, (frac, variants) in enumerate(crop_variants):
+            for variant in variants:
+                rt, cf = ocr_digits(
+                    variant,
+                    use_text_det=True,
+                    detector_profile="legacy",
+                )
+                if cf < PARSEABLE_CONFIDENCE_FLOOR:
+                    continue
+                value = parse_ocr_result(rt, cf)
+                if value is not None:
+                    legacy_candidates.append((value, cf, rt, frac))
+            if index >= 1:
+                accepted = _quantity_consensus(
+                    legacy_candidates,
+                    min_sources=2,
+                    min_confidence=0.50,
+                )
+                if accepted is not None:
+                    raw_text, confidence, value = accepted
+                    return raw_text, confidence, value, "legacy_detector"
+        if not legacy_candidates:
+            return det_first_rt or first_rt, det_first_cf or first_cf, None, "unknown"
+        candidates = legacy_candidates
+        final_route = "legacy_detector"
 
-    grouped: dict[int, list[tuple[float, str]]] = {}
-    for value, cf, rt in candidates:
-        grouped.setdefault(value, []).append((cf, rt))
-
-    chosen = max(
-        grouped,
-        key=lambda v: (
-            len(grouped[v]),
-            len(str(v)),
-            max(cf for cf, _ in grouped[v]),
-        ),
+    ranked = _rank_quantity_candidates(candidates)
+    chosen, data = ranked[0]
+    return (
+        str(data["best_raw"]),
+        float(data["max_conf"]),
+        chosen,
+        final_route,
     )
-    cf, rt = max(grouped[chosen], key=lambda item: item[0])
-    if route_out is not None:
-        route_out.append("fallback")
-    return rt, cf, chosen
 
 
 def _recognize_top_bar_currency(canvas: np.ndarray) -> dict | None:
@@ -247,36 +319,65 @@ def _recognize_top_bar_currency(canvas: np.ndarray) -> dict | None:
     session: the balance is identical, so only one merged entry surfaces.
     """
     canvas_h, canvas_w = canvas.shape[:2]
-    candidates: list[tuple[int, float, str]] = []
+    variants: list[tuple[float, np.ndarray]] = []
 
-    for x, y, w, h in _TOP_BAR_CURRENCY_OCR_REGIONS:
+    for source, (x, y, w, h) in enumerate(_TOP_BAR_CURRENCY_OCR_REGIONS):
         if x >= canvas_w or y >= canvas_h:
             continue
         crop = canvas[y : min(y + h, canvas_h), x : min(x + w, canvas_w)]
         if crop.size == 0:
             continue
         for variant in (crop, _prepare_qty_ocr_image(crop)):
-            rt, cf = ocr_digits(variant)
-            value = parse_ocr_result(rt, cf)
-            if value is not None:
-                candidates.append((value, cf, rt))
+            variants.append((float(source), variant))
 
-    if not candidates:
+    candidates: list[QuantityCandidate] = []
+
+    def run_profile(
+        *,
+        use_text_det: bool,
+        detector_profile: DetectorProfile = "accurate",
+        strict: bool,
+    ) -> tuple[str, float, int] | None:
+        candidates.clear()
+        for source, variant in variants:
+            raw_text, confidence = ocr_digits(
+                variant,
+                use_text_det=use_text_det,
+                detector_profile=detector_profile,
+            )
+            if confidence < PARSEABLE_CONFIDENCE_FLOOR:
+                continue
+            value = (
+                parse_quantity_string_strict(raw_text)
+                if strict
+                else parse_ocr_result(raw_text, confidence)
+            )
+            if value is not None:
+                candidates.append((value, confidence, raw_text, source))
+        return _quantity_consensus(
+            candidates,
+            min_sources=2,
+            min_confidence=0.50,
+        )
+
+    accepted = run_profile(use_text_det=False, strict=True)
+    if accepted is None:
+        accepted = run_profile(
+            use_text_det=True,
+            detector_profile="fast",
+            strict=True,
+        )
+    if accepted is None:
+        accepted = run_profile(use_text_det=True, strict=False)
+
+    if accepted is None and not candidates:
         return None
 
-    grouped: dict[int, list[tuple[float, str]]] = {}
-    for value, cf, rt in candidates:
-        grouped.setdefault(value, []).append((cf, rt))
-
-    chosen = max(
-        grouped,
-        key=lambda v: (
-            len(grouped[v]),
-            len(str(v)),
-            max(cf for cf, _ in grouped[v]),
-        ),
-    )
-    cf, _rt = max(grouped[chosen], key=lambda item: item[0])
+    if accepted is not None:
+        _raw_text, cf, chosen = accepted
+    else:
+        chosen, data = _rank_quantity_candidates(candidates)[0]
+        cf = float(data["max_conf"])
     if chosen == 0 or cf < 0.3:
         return None
 
@@ -290,7 +391,7 @@ def _recognize_top_bar_currency(canvas: np.ndarray) -> dict | None:
 
 
 @router.post("/inventory")
-async def recognize_inventory(image: UploadFile = File(...)):
+def recognize_inventory(image: UploadFile = File(...)):
     """
     Accept a screenshot of the inventory page.
     Return recognised items + unknowns.
@@ -298,9 +399,14 @@ async def recognize_inventory(image: UploadFile = File(...)):
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Expected an image upload")
 
+    raw = image.file.read()
+    with recognition_slot():
+        return _recognize_inventory_bytes(raw)
+
+
+def _recognize_inventory_bytes(raw: bytes) -> dict[str, list[dict]]:
     rid = make_request_id("inv")
     t_start = time.perf_counter()
-    raw = await image.read()
     bgr = _decode_upload(raw)
     canvas = load_and_normalize(bgr)
     canvas_h, canvas_w = canvas.shape[:2]
@@ -331,48 +437,41 @@ async def recognize_inventory(image: UploadFile = File(...)):
     t0 = time.perf_counter()
     library = _load_library()
     slot_matches = []
-    n_strong = 0
-    n_weak = 0
     for bbox in slots:
         x, y, w, h = bbox
         icon_h = int(h * 0.7)
         icon = canvas[y : y + icon_h, x : x + w]
-        best = match_slot(icon, library, threshold=0.0)
-        above_threshold = best.confidence >= 0.80
-        if above_threshold:
-            n_strong += 1
-        else:
-            n_weak += 1
-        slot_matches.append((bbox, best))
+        slot_matches.append((bbox, match_slot(icon, library, threshold=0.0)))
+    n_strong = sum(
+        1
+        for _, match in slot_matches
+        if is_confident_match(match)
+    )
     _log.info(
         "[%s] template_match: library=%d, %d strong / %d unknown (%.2fs)",
         rid,
         len(library),
         n_strong,
-        n_weak,
+        len(slot_matches) - n_strong,
         time.perf_counter() - t0,
     )
 
     items: list[dict] = []
     unknowns: list[dict] = []
-    ocr_counters = {"fastpath": 0, "fallback": 0, "early_exit": 0}
+    ocr_routes: Counter[str] = Counter()
 
     t0 = time.perf_counter()
     for idx, (bbox, best) in enumerate(slot_matches):
         x, y, w, h = bbox
         eff_h = min(max(h, target_h), canvas_h - y)
-        route_out: list[str] = []
-        raw_text, conf, quantity = _ocr_inventory_quantity(
-            canvas,
-            x,
-            y,
-            w,
-            eff_h,
-            counters=ocr_counters,
-            route_out=route_out,
-        )
-        route = route_out[0] if route_out else "unknown"
-        above_threshold = best.confidence >= 0.80
+        if best.confidence < _MIN_OCR_MATCH_CONFIDENCE:
+            raw_text, conf, quantity, route = "", 0.0, None, "skipped_weak_match"
+        else:
+            raw_text, conf, quantity, route = _ocr_inventory_quantity(
+                canvas, x, y, w, eff_h,
+            )
+        ocr_routes[route] += 1
+        above_threshold = is_confident_match(best)
 
         # Slot goes to unknowns only when the template match itself is weak.
         # A strong match with a failed OCR (single-digit quantities are hard)
@@ -436,12 +535,17 @@ async def recognize_inventory(image: UploadFile = File(...)):
         items.append(currency)
 
     _log.info(
-        "[%s] OCR: %d no-det accepted, %d detector fallback, %d early exits "
-        "(%.2fs)",
+        "[%s] OCR: %d no-det, %d fast-det, %d accurate fallback, "
+        "%d legacy fallback, %d skipped weak, %d accurate early exits (%.2fs)",
         rid,
-        ocr_counters["fastpath"],
-        ocr_counters["fallback"],
-        ocr_counters["early_exit"],
+        ocr_routes["fastpath"],
+        ocr_routes["fast_detector"],
+        ocr_routes["fallback_early"]
+        + ocr_routes["fallback_complete"]
+        + ocr_routes["unknown"],
+        ocr_routes["legacy_detector"],
+        ocr_routes["skipped_weak_match"],
+        ocr_routes["fallback_early"],
         time.perf_counter() - t0,
     )
     _log.info(

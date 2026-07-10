@@ -171,7 +171,7 @@ const LEVEL_BANDS: {
  *   - 收集区间内所有行的 exp 并一次性转换为卡片
  *   - 同时记录原始 exp 总量（作战记录经验值 / 认知载体经验值）
  */
-export function calculateLevelMaterials(operator: OperatorName, from: number, to: number): CostMap {
+export function calculateLevelMaterials(_operator: OperatorName, from: number, to: number): CostMap {
   if (from >= to) return {};
 
   const total: Record<string, number> = {};

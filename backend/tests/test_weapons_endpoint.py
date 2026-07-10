@@ -48,7 +48,7 @@ def test_weapons_endpoint_returns_items_for_synthetic_screenshot(client, monkeyp
     for i, t in enumerate(icons_src.values()):
         t[::(i + 2) * 4, :] = 0
 
-    levels = {"wp_aaa": 20, "wp_bbb": 40, "wp_ccc": 70}
+    levels = {"wp_aaa": 1, "wp_bbb": 40, "wp_ccc": 90}
 
     img, gt = build_operators_image(icons_src, levels, rows=1, cols=3)
 
@@ -83,6 +83,7 @@ def test_weapons_endpoint_returns_items_for_synthetic_screenshot(client, monkeyp
         assert isinstance(w["level"], int)
         assert "confidence" in w and 0.0 <= w["confidence"] <= 1.0
         assert len(w["bbox"]) == 4
+    assert {w["weapon_id"]: w["level"] for w in data["items"]} == levels
 
 
 def test_weapons_endpoint_rejects_non_image(client):
